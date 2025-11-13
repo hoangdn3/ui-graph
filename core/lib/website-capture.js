@@ -1,10 +1,28 @@
 import { promises as fs } from "node:fs";
+import sharp from "sharp";
 
 const scrollToBottom = function({ frequency = 100, timing = 8, remoteWindow = window } = {}) {
   let resolve;
   let scrolls = 1;
   let deferred = new Promise(r => (resolve = r));
-  let totalScrolls = remoteWindow.document.body.scrollHeight / frequency;
+  
+  const scrollHeight = Math.max(
+    remoteWindow.document.body.scrollHeight || 0,
+    remoteWindow.document.documentElement.scrollHeight || 0,
+    remoteWindow.document.body.offsetHeight || 0,
+    remoteWindow.document.documentElement.offsetHeight || 0,
+    remoteWindow.document.body.clientHeight || 0,
+    remoteWindow.document.documentElement.clientHeight || 0
+  );
+  
+  const viewportHeight = remoteWindow.innerHeight || 1080;
+  
+  if (scrollHeight <= viewportHeight) {
+    resolve(true);
+    return deferred;
+  }
+  
+  let totalScrolls = scrollHeight / frequency;
   
   function scroll() {
     let scrollBy = totalScrolls * scrolls;
@@ -27,6 +45,297 @@ const scrollToBottom = function({ frequency = 100, timing = 8, remoteWindow = wi
   return deferred;
 };
 
+const forceDocumentScroll = async (page) => {
+  const result = await page.evaluate(async () => {
+    const findScrollableElement = () => {
+      const candidates = [];
+      
+      const checkElement = (el) => {
+        if (!el || el === document.documentElement || el === document.body) return;
+        
+        const style = window.getComputedStyle(el);
+        const overflowY = style.overflowY;
+        
+        if (overflowY === 'auto' || overflowY === 'scroll') {
+          const scrollHeight = el.scrollHeight;
+          const clientHeight = el.clientHeight;
+          
+          if (scrollHeight > clientHeight) {
+            candidates.push({
+              element: el,
+              scrollHeight: scrollHeight,
+              clientHeight: clientHeight
+            });
+          }
+        }
+      };
+      
+      const walk = (el) => {
+        checkElement(el);
+        for (let child of el.children) {
+          walk(child);
+        }
+      };
+      
+      walk(document.body);
+      candidates.sort((a, b) => b.scrollHeight - a.scrollHeight);
+      
+      return candidates[0] || null;
+    };
+    
+    const scrollContainer = findScrollableElement();
+    
+    if (!scrollContainer) {
+      return { found: false };
+    }
+    
+    const container = scrollContainer.element;
+    
+    window.__originalStyles = [];
+    
+    const saveAndForceStyles = (el) => {
+      const originalStyles = {
+        element: el,
+        overflowY: el.style.overflowY,
+        overflowX: el.style.overflowX,
+        overflow: el.style.overflow,
+        height: el.style.height,
+        maxHeight: el.style.maxHeight,
+        minHeight: el.style.minHeight,
+        position: el.style.position,
+        top: el.style.top,
+        bottom: el.style.bottom,
+        left: el.style.left,
+        right: el.style.right
+      };
+      
+      window.__originalStyles.push(originalStyles);
+      
+      el.style.setProperty('overflow-y', 'visible', 'important');
+      el.style.setProperty('overflow-x', 'visible', 'important');
+      el.style.setProperty('overflow', 'visible', 'important');
+      el.style.setProperty('height', 'auto', 'important');
+      el.style.setProperty('max-height', 'none', 'important');
+      el.style.setProperty('min-height', '0', 'important');
+    };
+    
+    let currentEl = container;
+    while (currentEl && currentEl !== document.body) {
+      saveAndForceStyles(currentEl);
+      currentEl = currentEl.parentElement;
+    }
+    
+    document.body.style.setProperty('overflow-y', 'auto', 'important');
+    document.documentElement.style.setProperty('overflow-y', 'auto', 'important');
+    
+    await new Promise(resolve => setTimeout(resolve, 500));
+    
+    return { found: true };
+  });
+  
+  return result;
+};
+
+export const restoreOriginalScroll = async (page) => {
+  await page.evaluate(() => {
+    if (window.__originalStyles && window.__originalStyles.length > 0) {
+      for (const original of window.__originalStyles) {
+        const { element, overflowY, overflowX, overflow, height, maxHeight, minHeight, position, top, bottom, left, right } = original;
+        
+        const restore = (prop, value) => {
+          if (value) {
+            element.style[prop] = value;
+          } else {
+            element.style.removeProperty(prop);
+          }
+        };
+        
+        restore('overflowY', overflowY);
+        restore('overflowX', overflowX);
+        restore('overflow', overflow);
+        restore('height', height);
+        restore('maxHeight', maxHeight);
+        restore('minHeight', minHeight);
+        restore('position', position);
+        restore('top', top);
+        restore('bottom', bottom);
+        restore('left', left);
+        restore('right', right);
+      }
+      
+      delete window.__originalStyles;
+    }
+    
+    document.body.style.removeProperty('overflow-y');
+    document.documentElement.style.removeProperty('overflow-y');
+  });
+};
+
+const captureByStitching = async (page, options) => {
+  await forceDocumentScroll(page);
+  
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await new Promise(resolve => setTimeout(resolve, 300));
+  
+  let dimensions = await page.evaluate(() => {
+    const scrollHeight = Math.max(
+      document.body.scrollHeight,
+      document.documentElement.scrollHeight,
+      document.body.offsetHeight,
+      document.documentElement.offsetHeight
+    );
+    
+    const viewportHeight = window.innerHeight;
+    const viewportWidth = window.innerWidth;
+    const devicePixelRatio = window.devicePixelRatio;
+    
+    return {
+      scrollHeight,
+      viewportHeight,
+      viewportWidth,
+      devicePixelRatio
+    };
+  });
+  
+  const numSections = Math.ceil(dimensions.scrollHeight / dimensions.viewportHeight);
+  
+  if (numSections === 1) {
+    const buffer = await page.screenshot({
+      omitBackground: !options.defaultBackground
+    });
+    return buffer;
+  }
+  
+  console.log(`📸 Capturing ${numSections} sections with stitching...`);
+  
+  const fullSectionsHeight = (numSections - 1) * dimensions.viewportHeight;
+  const lastSectionHeight = Math.max(0, dimensions.scrollHeight - fullSectionsHeight);
+  const physicalViewportHeight = Math.round(dimensions.viewportHeight * dimensions.devicePixelRatio);
+  const physicalWidth = Math.round(dimensions.viewportWidth * dimensions.devicePixelRatio);
+  const physicalLastHeight = Math.round(lastSectionHeight * dimensions.devicePixelRatio);
+  
+  const sections = [];
+  
+  for (let i = 0; i < numSections; i++) {
+    const isLast = i === numSections - 1;
+    let scrollY;
+    
+    if (isLast && lastSectionHeight > 0 && lastSectionHeight < dimensions.viewportHeight) {
+      scrollY = dimensions.scrollHeight - dimensions.viewportHeight;
+    } else {
+      scrollY = i * dimensions.viewportHeight;
+    }
+    
+    await page.evaluate((y) => {
+      window.scrollTo(0, y);
+      document.documentElement.scrollTop = y;
+      document.body.scrollTop = y;
+    }, scrollY);
+    
+    await new Promise(resolve => setTimeout(resolve, 500));
+    
+    const actualScrollY = await page.evaluate(() => {
+      return Math.max(
+        window.pageYOffset || window.scrollY || 0,
+        document.documentElement.scrollTop || 0,
+        document.body.scrollTop || 0
+      );
+    });
+    
+    if (Math.abs(actualScrollY - scrollY) > 10) {
+      console.log(`  ⚠️ Scroll mismatch: expected ${scrollY}, got ${actualScrollY}`);
+    }
+    
+    await new Promise(resolve => setTimeout(resolve, 500));
+    
+    const screenshot = await page.screenshot({
+      omitBackground: !options.defaultBackground
+    });
+    
+    sections.push(screenshot);
+    console.log(`  ✅ Section ${i + 1}/${numSections} captured at y=${scrollY} (actual: ${actualScrollY})`);
+  }
+  
+  await page.evaluate(() => window.scrollTo(0, 0));
+  
+  let compositeImages = [];
+  
+  for (let i = 0; i < sections.length - 1; i++) {
+    const sectionBuffer = sections[i];
+    const croppedSection = await sharp(sectionBuffer)
+      .extract({
+        left: 0,
+        top: 0,
+        width: physicalWidth,
+        height: physicalViewportHeight
+      })
+      .toBuffer();
+    
+    compositeImages.push({
+      input: croppedSection,
+      top: i * physicalViewportHeight,
+      left: 0
+    });
+  }
+  
+  if (lastSectionHeight > 0 && lastSectionHeight < dimensions.viewportHeight) {
+    const lastSectionBuffer = sections[sections.length - 1];
+    const cropTop = physicalViewportHeight - physicalLastHeight;
+    const croppedLast = await sharp(lastSectionBuffer)
+      .extract({
+        left: 0,
+        top: cropTop,
+        width: physicalWidth,
+        height: physicalLastHeight
+      })
+      .toBuffer();
+    
+    compositeImages.push({
+      input: croppedLast,
+      top: (sections.length - 1) * physicalViewportHeight,
+      left: 0
+    });
+  } else {
+    const lastSectionBuffer = sections[sections.length - 1];
+    const croppedLast = await sharp(lastSectionBuffer)
+      .extract({
+        left: 0,
+        top: 0,
+        width: physicalWidth,
+        height: physicalViewportHeight
+      })
+      .toBuffer();
+    
+    compositeImages.push({
+      input: croppedLast,
+      top: (sections.length - 1) * physicalViewportHeight,
+      left: 0
+    });
+  }
+  
+  const totalHeight = (sections.length - 1) * physicalViewportHeight + physicalLastHeight;
+  
+  console.log(`🔧 Stitching ${sections.length} sections into ${physicalWidth}x${totalHeight}...`);
+  
+  const mergedBuffer = await sharp({
+    create: {
+      width: physicalWidth,
+      height: totalHeight,
+      channels: 4,
+      background: options.defaultBackground 
+        ? { r: 255, g: 255, b: 255, alpha: 1 } 
+        : { r: 0, g: 0, b: 0, alpha: 0 }
+    }
+  })
+  .composite(compositeImages)
+  .png()
+  .toBuffer();
+  
+  console.log(`✅ Stitching completed`);
+  
+  return mergedBuffer;
+};
+
 const internalCaptureWebsiteCore = async (options, page) => {
   options = {
     width: 1920,
@@ -35,6 +344,7 @@ const internalCaptureWebsiteCore = async (options, page) => {
     fullPage: true,
     defaultBackground: true,
     delay: 1,
+    useStitching: false,
     ...options,
   };
 
@@ -47,7 +357,61 @@ const internalCaptureWebsiteCore = async (options, page) => {
   await page.setViewport(viewportOptions);
 
   if (options.fullPage) {
+    // await forceDocumentScroll(page);
+    const hasCustomScroll = await forceDocumentScroll(page);
+    
+    if (hasCustomScroll.found) {
+      return await captureByStitching(page, options);
+    }
+    
     await page.evaluate(scrollToBottom);
+    
+    if (options.delay) {
+      await new Promise(resolve => setTimeout(resolve, options.delay * 1000));
+    }
+
+    const { width, height, devicePixelRatio } = await page.evaluate(() => {
+      return {
+        width: window.innerWidth,
+        height: Math.max(
+          document.body.scrollHeight,
+          document.documentElement.scrollHeight,
+          document.body.offsetHeight,
+          document.documentElement.offsetHeight
+        ),
+        devicePixelRatio: window.devicePixelRatio
+      };
+    });
+
+    const client = page._client();
+    
+    await page.evaluate(() => window.scrollTo(0, 0));
+    
+    const clip = {
+      x: 0,
+      y: 0,
+      width: width,
+      height: height,
+      scale: devicePixelRatio
+    };
+
+    if (!options.defaultBackground) {
+      await client.send('Emulation.setDefaultBackgroundColorOverride', {
+        color: { r: 0, g: 0, b: 0, a: 0 }
+      });
+    }
+
+    const result = await client.send('Page.captureScreenshot', {
+      format: 'png',
+      clip: clip,
+      captureBeyondViewport: true
+    });
+
+    if (!options.defaultBackground) {
+      await client.send('Emulation.setDefaultBackgroundColorOverride');
+    }
+
+    return Buffer.from(result.data, 'base64');
   }
 
   if (options.delay) {
@@ -55,7 +419,6 @@ const internalCaptureWebsiteCore = async (options, page) => {
   }
 
   const buffer = await page.screenshot({
-    fullPage: options.fullPage,
     omitBackground: !options.defaultBackground,
   });
 

@@ -554,8 +554,11 @@ window.PanelEditor = class PanelEditor {
         }
         
         if (this.mode !== 'cropOnly') {
-            document.addEventListener('keydown', (e) => {
-                if (this.isEditingLabel) {
+            this._keydownHandler = (e) => {
+                const activeObject = this.canvas.getActiveObject();
+                const isEditingIText = activeObject && activeObject.type === 'i-text' && activeObject.isEditing;
+                
+                if (this.isEditingLabel || isEditingIText) {
                     return;
                 }
                 
@@ -569,7 +572,8 @@ window.PanelEditor = class PanelEditor {
                     e.preventDefault();
                     this.redo();
                 }
-            });
+            };
+            document.addEventListener('keydown', this._keydownHandler);
         }
     }
     
@@ -1068,16 +1072,18 @@ window.PanelEditor = class PanelEditor {
         const boxData = this.fabricObjects.get(id);
         if (!boxData) return;
         
-        const type = boxData.rect.type;
-        const color = type === 'panel' ? '#ff4444' : '#00aaff';
+        const labelBgColor = label.backgroundColor || 'rgba(0,0,0,0.55)';
+        const labelFill = label.fill || '#ffffff';
+        const labelFontSize = label.fontSize || 12;
+        const labelPadding = label.padding || 3;
         
         const itext = new fabric.IText(label.text, {
             left: label.left,
             top: label.top,
-            fontSize: 12,
-            fill: '#fff',
-            backgroundColor: color,
-            padding: 4,
+            fontSize: labelFontSize,
+            fill: labelFill,
+            backgroundColor: labelBgColor,
+            padding: labelPadding,
             fontWeight: 'bold'
         });
         
@@ -1113,10 +1119,10 @@ window.PanelEditor = class PanelEditor {
             const newLabel = new fabric.Text(newText, {
                 left: itext.left,
                 top: itext.top,
-                fontSize: 12,
-                fill: '#fff',
-                backgroundColor: color,
-                padding: 4,
+                fontSize: labelFontSize,
+                fill: labelFill,
+                backgroundColor: labelBgColor,
+                padding: labelPadding,
                 fontWeight: 'bold',
                 selectable: false,
                 evented: true,
@@ -1374,6 +1380,11 @@ window.PanelEditor = class PanelEditor {
     }
 
     async destroy() {
+        if (this._keydownHandler) {
+            document.removeEventListener('keydown', this._keydownHandler);
+            this._keydownHandler = null;
+        }
+        
         if (this.canvas) {
             this.canvas.dispose();
         }

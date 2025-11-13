@@ -3,6 +3,8 @@ import { promises as fsp } from 'fs';
 import path from 'path';
 
 export function createQueuePageHandlers(tracker, width, height, trackingWidth, queueWidth) {
+    let lastLoadedPanelId = null;
+    
     const getActionIdsForItem = async (itemId, itemCategory) => {
         if (itemCategory === 'PAGE') {
             const parentPath = path.join(tracker.sessionFolder, 'myparent_panel.jsonl');
@@ -1416,15 +1418,15 @@ export function createQueuePageHandlers(tracker, width, height, trackingWidth, q
                 timestamp: Date.now()
             });
             
-            await tracker.page.evaluate(() => {
-                document.documentElement.style.overflow = 'hidden';
-                document.body.style.overflow = 'hidden';
-            });
-            
             const { captureScreenshot } = await import('../media/screenshot.js');
             const result = await captureScreenshot(tracker.page, "base64", true, true);
             const { screenshot, imageWidth, imageHeight, restoreViewport } = result;
             console.log(`📐 Long scroll image captured: ${imageWidth}x${imageHeight}`);
+            
+            await tracker.page.evaluate(() => {
+                document.documentElement.style.overflow = 'hidden';
+                document.body.style.overflow = 'hidden';
+            });
             
             await tracker.dataItemManager.updateItem(tracker.selectedPanelId, {
                 image_base64: screenshot,
@@ -1478,13 +1480,19 @@ export function createQueuePageHandlers(tracker, width, height, trackingWidth, q
             
             try {
                 console.log('🌐 Auto-detecting actions on PANEL (full page)...');
+                const { restoreOriginalScroll } = await import('../lib/website-capture.js');
+                await restoreOriginalScroll(tracker.page);
+                
+                await tracker.page.evaluate(() => {
+                    document.documentElement.style.removeProperty('overflow');
+                    document.body.style.removeProperty('overflow');
+                });
+                
+                await new Promise(resolve => setTimeout(resolve, 500));
+                
                 const { detectScreenByDOM } = await import('./gemini-handler.js');
                 await detectScreenByDOM(tracker, tracker.selectedPanelId, true, imageWidth, imageHeight, true);
             } finally {
-                await tracker.page.evaluate(() => {
-                    document.documentElement.style.overflow = '';
-                    document.body.style.overflow = '';
-                });
                 if (restoreViewport) {
                     await restoreViewport();
                 }
@@ -1661,6 +1669,10 @@ export function createQueuePageHandlers(tracker, width, height, trackingWidth, q
                     type: 'show_toast',
                     message: `⏳ Vui lòng chờ yêu cầu cho "${loadingName}" xử lý xong`
                 });
+                return;
+            }
+            
+            if (tracker.selectedPanelId === itemId && lastLoadedPanelId === itemId) {
                 return;
             }
             
@@ -1859,6 +1871,7 @@ export function createQueuePageHandlers(tracker, width, height, trackingWidth, q
             }
             
             await tracker._broadcast(updatedEvent);
+            lastLoadedPanelId = itemId;
         } catch (err) {
             console.error('Failed to select panel:', err);
         } finally {

@@ -77,7 +77,7 @@ export async function captureActionsFromDOM(page, cropArea = null, fullPage = fa
                     
                     let refWidth, refHeight, scaledX, scaledY, scaledW, scaledH;
                     if (imageWidth && imageHeight) {
-                        const refDimHeight = fullPage ? documentHeight : viewportHeight;
+                        const refDimHeight = fullPage ? imageHeight : viewportHeight;
                         const scaleX = imageWidth / viewportWidth;
                         const scaleY = imageHeight / refDimHeight;
                         
