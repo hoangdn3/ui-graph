@@ -122,6 +122,7 @@ export async function setupTracking(tracker) {
         await exposeIfNotExists("triggerUseBeforePanel", handlers.triggerUseBeforePanel);
     }
 
+    try {
         await tracker.page.evaluate(() => {
         if (!window.showTrackingToast) {
             window.showTrackingToast = (message) => {
@@ -426,6 +427,10 @@ export async function setupTracking(tracker) {
 
         window.__trackingSetup = true;
     });
+    } catch (err) {
+        console.error('Failed to setup tracking injection:', err);
+        return;
+    }
     
     console.log('✅ Tracking setup completed! Ctrl/Cmd+1: Detect Pages ready.');
     

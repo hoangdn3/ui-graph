@@ -1198,13 +1198,13 @@ export const QUEUE_BROWSER_HTML = `
         
         contentDiv.addEventListener('contextmenu', (e) => {
           e.preventDefault();
-          showContextMenu(e.clientX, e.clientY, node.panel_id, node.status, node.name, node.item_category);
+          showContextMenu(e.clientX, e.clientY, node.panel_id, node.status, node.name, node.item_category, node.pageNumber, node.maxPageNumber);
         });
         
         return nodeDiv;
       }
       
-      function showContextMenu(x, y, panelId, status, nodeName, itemCategory) {
+      function showContextMenu(x, y, panelId, status, nodeName, itemCategory, pageNumber, maxPageNumber) {
         const existingMenu = document.getElementById('tree-context-menu');
         if (existingMenu) {
           existingMenu.remove();
@@ -1257,6 +1257,30 @@ export const QUEUE_BROWSER_HTML = `
         });
         
         menu.appendChild(renameOption);
+        
+        if (itemCategory === 'PANEL') {
+          const newPageOption = document.createElement('div');
+          newPageOption.textContent = '➕ New Page';
+          newPageOption.style.cssText = \`
+            padding: 8px 12px;
+            cursor: pointer;
+            font-size: 14px;
+            border-top: 1px solid #eee;
+          \`;
+          newPageOption.addEventListener('mouseenter', () => {
+            newPageOption.style.background = '#f0f0f0';
+          });
+          newPageOption.addEventListener('mouseleave', () => {
+            newPageOption.style.background = 'transparent';
+          });
+          newPageOption.addEventListener('click', async () => {
+            menu.remove();
+            if (window.createManualPage) {
+              await window.createManualPage(panelId);
+            }
+          });
+          menu.appendChild(newPageOption);
+        }
         
         if (itemCategory === 'ACTION') {
           const renameByAIOption = document.createElement('div');
@@ -1334,7 +1358,15 @@ export const QUEUE_BROWSER_HTML = `
         }
         
         if (!isRootPanel) {
-          menu.appendChild(deleteOption);
+          if (itemCategory === 'PAGE') {
+            // Chỉ cho delete page cuối cùng (page có number lớn nhất)
+            if (pageNumber && maxPageNumber && pageNumber === maxPageNumber) {
+              menu.appendChild(deleteOption);
+            }
+          } else {
+            // PANEL và ACTION - delete bình thường
+            menu.appendChild(deleteOption);
+          }
         }
         
         document.body.appendChild(menu);

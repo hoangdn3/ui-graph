@@ -351,12 +351,34 @@ export async function detectScreenByGemini(tracker) {
                     
                     const panelItem = await tracker.dataItemManager.getItem(scr.panel_id);
                     let pageNumber = null;
+                    let parentPanelId = null;
+                    let existingActionIds = [];
+                    
                     if (panelItem && panelItem.item_category === 'PAGE') {
                         pageNumber = panelItem.metadata?.p || null;
+                        
+                        const { promises: fsp } = await import('fs');
+                        const path = await import('path');
+                        const parentPath = path.join(tracker.sessionFolder, 'myparent_panel.jsonl');
+                        const content = await fsp.readFile(parentPath, 'utf8');
+                        const allParents = content.trim().split('\n')
+                            .filter(line => line.trim())
+                            .map(line => JSON.parse(line));
+                        
+                        for (const parentEntry of allParents) {
+                            if (parentEntry.child_pages) {
+                                const pageEntry = parentEntry.child_pages.find(pg => pg.page_id === scr.panel_id);
+                                if (pageEntry) {
+                                    parentPanelId = parentEntry.parent_panel;
+                                    existingActionIds = pageEntry.child_actions || [];
+                                    break;
+                                }
+                            }
+                        }
+                    } else {
+                        const parentEntry = await tracker.parentPanelManager.getPanelEntry(scr.panel_id);
+                        existingActionIds = parentEntry?.child_actions || [];
                     }
-                    
-                    const parentEntry = await tracker.parentPanelManager.getPanelEntry(scr.panel_id);
-                    const existingActionIds = parentEntry?.child_actions || [];
                     
                     const existingActions = await Promise.all(
                         existingActionIds.map(id => tracker.dataItemManager.getItem(id))
@@ -388,7 +410,11 @@ export async function detectScreenByGemini(tracker) {
                             pageNumber
                         );
                         
-                        await tracker.parentPanelManager.addChildAction(scr.panel_id, actionItemId);
+                        if (panelItem.item_category === 'PAGE' && parentPanelId) {
+                            await tracker.parentPanelManager.addChildActionToPage(parentPanelId, scr.panel_id, actionItemId);
+                        } else {
+                            await tracker.parentPanelManager.addChildAction(scr.panel_id, actionItemId);
+                        }
                     }
                     
                     console.log(`✅ Created ${actionsFromGemini.length} actions in doing_item.jsonl`);
@@ -583,8 +609,15 @@ export async function detectScreenByDOM(tracker, panelId, fullPage = false, imag
         }
         
         if (tracker.dataItemManager && tracker.parentPanelManager) {
-            const parentEntry = await tracker.parentPanelManager.getPanelEntry(panelId);
-            const existingActionIds = parentEntry?.child_actions || [];
+            let existingActionIds = [];
+            
+            if (panelItem.item_category === 'PAGE' && parentPanelEntry) {
+                const pageEntry = parentPanelEntry.child_pages.find(pg => pg.page_id === panelId);
+                existingActionIds = pageEntry?.child_actions || [];
+            } else {
+                const parentEntry = await tracker.parentPanelManager.getPanelEntry(panelId);
+                existingActionIds = parentEntry?.child_actions || [];
+            }
             
             const existingActions = await Promise.all(
                 existingActionIds.map(id => tracker.dataItemManager.getItem(id))

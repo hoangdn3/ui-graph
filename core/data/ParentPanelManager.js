@@ -189,6 +189,29 @@ export class ParentPanelManager {
         }
     }
 
+    async removeChildPage(panelItemId, pageItemId) {
+        try {
+            const content = await fsp.readFile(this.parentPath, 'utf8');
+            const entries = content.trim().split('\n')
+                .filter(line => line.trim())
+                .map(line => JSON.parse(line));
+
+            const index = entries.findIndex(entry => entry.parent_panel === panelItemId);
+            if (index === -1) return false;
+
+            if (entries[index].child_pages) {
+                entries[index].child_pages = entries[index].child_pages.filter(pg => pg.page_id !== pageItemId);
+            }
+
+            const newContent = entries.map(entry => JSON.stringify(entry)).join('\n') + '\n';
+            await fsp.writeFile(this.parentPath, newContent, 'utf8');
+            
+            return true;
+        } catch (err) {
+            return false;
+        }
+    }
+
     async deletePanelEntry(panelItemId) {
         try {
             const content = await fsp.readFile(this.parentPath, 'utf8');
@@ -221,6 +244,15 @@ export class ParentPanelManager {
         if (!entry) return descendants;
 
         descendants.push(...entry.child_actions);
+        
+        if (entry.child_pages && entry.child_pages.length > 0) {
+            for (const pageEntry of entry.child_pages) {
+                descendants.push(pageEntry.page_id);
+                if (pageEntry.child_actions) {
+                    descendants.push(...pageEntry.child_actions);
+                }
+            }
+        }
 
         for (const childPanelId of entry.child_panels) {
             descendants.push(childPanelId);

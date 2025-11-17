@@ -53,9 +53,14 @@ export class PanelLogManager {
                 if (!parentNode) continue;
                 
                 if (parentEntry.child_pages && parentEntry.child_pages.length > 0) {
+                    const maxPageNumber = Math.max(...parentEntry.child_pages.map(p => p.page_number));
+                    
                     for (const pageEntry of parentEntry.child_pages) {
                         const pageNode = itemMap.get(pageEntry.page_id);
                         if (pageNode) {
+                            pageNode.pageNumber = pageEntry.page_number;
+                            pageNode.maxPageNumber = maxPageNumber;
+                            
                             for (const actionId of pageEntry.child_actions) {
                                 const actionNode = itemMap.get(actionId);
                                 if (actionNode) {

@@ -119,6 +119,7 @@ export async function initBrowsers(tracker, startUrl) {
     await tracker.queuePage.exposeFunction("checkActionHasStep", handlers.checkActionHasStep);
     await tracker.queuePage.exposeFunction("importCookiesFromJson", handlers.importCookiesFromJson);
     await tracker.queuePage.exposeFunction("updatePanelImageAndCoordinates", handlers.updatePanelImageAndCoordinates);
+    await tracker.queuePage.exposeFunction("createManualPage", handlers.createManualPage);
 
     await tracker.page.goto(startUrl, { waitUntil: 'networkidle2', timeout: 60000 });
     const websites = await fetchWebsiteList();

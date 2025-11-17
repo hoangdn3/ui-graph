@@ -827,6 +827,7 @@ export function createQueuePageHandlers(tracker, width, height, trackingWidth, q
                 return;
             }
             
+            const { promises: fsp } = await import('fs');
             let itemsToDelete = [targetItemId];
             
             if (item.item_category === 'PANEL') {
@@ -834,11 +835,31 @@ export function createQueuePageHandlers(tracker, width, height, trackingWidth, q
                 itemsToDelete.push(...descendants);
                 
                 console.log(`🗑️ Deleting panel "${item.name}" and ${descendants.length} descendants`);
+            } else if (item.item_category === 'PAGE') {
+                const parentPath = path.join(tracker.sessionFolder, 'myparent_panel.jsonl');
+                try {
+                    const content = await fsp.readFile(parentPath, 'utf8');
+                    const allParents = content.trim().split('\n')
+                        .filter(line => line.trim())
+                        .map(line => JSON.parse(line));
+                    
+                    for (const parentEntry of allParents) {
+                        if (parentEntry.child_pages) {
+                            const pageEntry = parentEntry.child_pages.find(pg => pg.page_id === targetItemId);
+                            if (pageEntry && pageEntry.child_actions) {
+                                itemsToDelete.push(...pageEntry.child_actions);
+                                console.log(`🗑️ Deleting page "${item.name}" and ${pageEntry.child_actions.length} actions`);
+                                break;
+                            }
+                        }
+                    }
+                } catch (err) {
+                    console.log(`🗑️ Deleting page "${item.name}"`);
+                }
             } else if (item.item_category === 'ACTION') {
                 console.log(`🗑️ Deleting action "${item.name}"`);
             }
             
-            const { promises: fsp } = await import('fs');
             const stepPath = path.join(tracker.sessionFolder, 'doing_step.jsonl');
             
             try {
@@ -893,7 +914,8 @@ export function createQueuePageHandlers(tracker, width, height, trackingWidth, q
                 
                 const parentEntry = allParents.find(p => 
                     p.child_actions.includes(targetItemId) || 
-                    p.child_panels.includes(targetItemId)
+                    p.child_panels.includes(targetItemId) ||
+                    (p.child_pages && p.child_pages.some(pg => pg.page_id === targetItemId))
                 );
                 
                 if (parentEntry) {
@@ -902,6 +924,8 @@ export function createQueuePageHandlers(tracker, width, height, trackingWidth, q
                         await checkAndUpdatePanelStatusHandler(parentEntry.parent_panel);
                     } else if (item.item_category === 'PANEL') {
                         await tracker.parentPanelManager.removeChildPanel(parentEntry.parent_panel, targetItemId);
+                    } else if (item.item_category === 'PAGE') {
+                        await tracker.parentPanelManager.removeChildPage(parentEntry.parent_panel, targetItemId);
                     }
                 }
             } catch (err) {
@@ -2603,6 +2627,53 @@ export function createQueuePageHandlers(tracker, width, height, trackingWidth, q
         }
     };
 
+    const createManualPageHandler = async (panelId) => {
+        try {
+            if (!tracker.dataItemManager || !tracker.parentPanelManager) return;
+            
+            const panel = await tracker.dataItemManager.getItem(panelId);
+            if (!panel || panel.item_category !== 'PANEL') {
+                console.error('Invalid panel');
+                return;
+            }
+            
+            const parentEntry = await tracker.parentPanelManager.getPanelEntry(panelId);
+            if (!parentEntry) {
+                console.error('Panel entry not found');
+                return;
+            }
+            
+            const existingPages = parentEntry.child_pages || [];
+            const nextPageNumber = existingPages.length + 1;
+            
+            const pageId = await tracker.dataItemManager.createPage(
+                nextPageNumber,
+                null,
+                { x: 0, y: 0, w: 0, h: 0 }
+            );
+            
+            await tracker.parentPanelManager.addChildPage(panelId, nextPageNumber, pageId);
+            
+            await tracker._broadcast({
+                type: 'tree_update',
+                data: await tracker.panelLogManager.buildTreeStructure()
+            });
+            
+            await tracker._broadcast({
+                type: 'show_toast',
+                message: `✅ Created Page ${nextPageNumber}`
+            });
+            
+            console.log(`✅ Manual page created: Page ${nextPageNumber} (${pageId})`);
+        } catch (err) {
+            console.error('Failed to create manual page:', err);
+            await tracker._broadcast({
+                type: 'show_toast',
+                message: '❌ Failed to create page'
+            });
+        }
+    };
+
     return {
         quitApp: quitAppHandler,
         saveEvents: saveEventsHandler,
@@ -2639,6 +2710,7 @@ export function createQueuePageHandlers(tracker, width, height, trackingWidth, q
         resetDrawingFlag: resetDrawingFlagHandler,
         checkActionHasStep: checkActionHasStepHandler,
         importCookiesFromJson: importCookiesFromJsonHandler,
-        updatePanelImageAndCoordinates: updatePanelImageAndCoordinatesHandler
+        updatePanelImageAndCoordinates: updatePanelImageAndCoordinatesHandler,
+        createManualPage: createManualPageHandler
     };
 }
