@@ -643,12 +643,13 @@ export function createQueuePageHandlers(tracker, width, height, trackingWidth, q
                 console.error('Item is not a PANEL or PAGE');
                 return;
             }
-            
-            if (item.item_category === 'PANEL' && item.name !== 'After Login Panel') {
-                console.log('Non-root panel → Deleting panel instead of reset');
-                await deleteEventHandler(targetItemId);
-                return;
-            }
+
+            // Không xoá panel được tạo từ action khi bấm reset
+            // if (item.item_category === 'PANEL' && item.name !== 'After Login Panel') {
+            //     console.log('Non-root panel → Deleting panel instead of reset');
+            //     await deleteEventHandler(targetItemId);
+            //     return;
+            // }
             
             tracker.geminiAsking = false;
             

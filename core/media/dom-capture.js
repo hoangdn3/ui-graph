@@ -6,8 +6,27 @@ export async function captureActionsFromDOM(page, cropArea = null, fullPage = fa
     });
     
     if (fullPage) {
+        try {
+            await page.waitForLoadState('networkidle', { timeout: 3000 });
+        } catch (err) {
+        }
+        
+        const pageHeight = await page.evaluate(() => document.documentElement.scrollHeight);
+        const viewportHeight = await page.evaluate(() => window.innerHeight);
+        
         await page.evaluate(() => window.scrollTo(0, 0));
-        await new Promise(r => setTimeout(r, 100));
+        await new Promise(r => setTimeout(r, 300));
+        
+        const scrollSteps = Math.ceil(pageHeight / viewportHeight);
+        for (let i = 1; i < scrollSteps; i++) {
+            await page.evaluate((step, vh) => {
+                window.scrollTo(0, step * vh);
+            }, i, viewportHeight);
+            await new Promise(r => setTimeout(r, 200));
+        }
+        
+        await page.evaluate(() => window.scrollTo(0, 0));
+        await new Promise(r => setTimeout(r, 800));
     }
     
     const actions = await page.evaluate((cropArea, fullPage, imageWidth, imageHeight) => {
