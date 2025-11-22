@@ -451,43 +451,9 @@ export const QUEUE_BROWSER_HTML = `
         border-radius: 2px;
       }
       
-      #loading-overlay {
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        background: rgba(0, 0, 0, 0.5);
-        display: none;
-        justify-content: center;
-        align-items: center;
-        z-index: 99999;
-      }
-      
-      #loading-overlay.show {
-        display: flex;
-      }
-      
-      #loading-spinner {
-        width: 60px;
-        height: 60px;
-        border: 5px solid #f3f3f3;
-        border-top: 5px solid #007bff;
-        border-radius: 50%;
-        animation: spin 1s linear infinite;
-      }
-      
-      @keyframes spin {
-        0% { transform: rotate(0deg); }
-        100% { transform: rotate(360deg); }
-      }
     </style>
   </head>
   <body>
-    <div id="loading-overlay">
-      <div id="loading-spinner"></div>
-    </div>
-    
     <div id="main-container">
       <div id="panel-tree-container">
         <h3>Panel Log</h3>
@@ -497,7 +463,8 @@ export const QUEUE_BROWSER_HTML = `
       <div id="content-container">
     <div id="controls">
       <button id="captureActionsDOMBtn" style="display:none; background:#007bff;">📸 Detect Action</button>
-      <button id="detectPagesBtn" style="display:none; background:#007bff;">📄 Detect Pages</button>
+      <button id="drawPanelAndDetectActionsBtn" style="display:none; background:#007bff;">🎨 Draw Panel & Detect Actions</button>
+      <button id="detectPagesBtn" style="display:none; background:#007bff;">📄 Detect Pages (Old)</button>
       <button id="drawPanelBtn" style="display:none;">🖼️ Draw Panel</button>
       <button id="importCookiesBtn" style="display:inline-block;">🍪 Import Cookies</button>
       <input type="file" id="cookieFileInput" accept=".json" style="display:none;">
@@ -546,17 +513,6 @@ export const QUEUE_BROWSER_HTML = `
             updateDetectCaptureButtonsState();
           }
           handlePanelSelected(evt);
-          
-          if (window.__loadingTimeout) {
-            clearTimeout(window.__loadingTimeout);
-            window.__loadingTimeout = null;
-          }
-          
-          const loadingOverlay = document.getElementById('loading-overlay');
-          if (loadingOverlay) {
-            loadingOverlay.classList.remove('show');
-          }
-          
           return;
         }
 
@@ -620,14 +576,28 @@ export const QUEUE_BROWSER_HTML = `
           
           isDrawingPanel = true;
           
+          const originalDrawPanelText = drawPanelBtn.textContent;
+          drawPanelBtn.disabled = true;
+          drawPanelBtn.style.opacity = '0.6';
+          drawPanelBtn.style.cursor = 'not-allowed';
+          drawPanelBtn.textContent = '⏳ Creating...';
+          
           try {
             if (window.drawPanel) {
               const result = await window.drawPanel('DRAW_NEW');
               isDrawingPanel = false;
+              drawPanelBtn.disabled = false;
+              drawPanelBtn.style.opacity = '1';
+              drawPanelBtn.style.cursor = 'pointer';
+              drawPanelBtn.textContent = originalDrawPanelText;
             }
           } catch (err) {
             console.error('Draw panel error:', err);
             isDrawingPanel = false;
+            drawPanelBtn.disabled = false;
+            drawPanelBtn.style.opacity = '1';
+            drawPanelBtn.style.cursor = 'pointer';
+            drawPanelBtn.textContent = originalDrawPanelText;
           }
           return;
         }
@@ -786,6 +756,7 @@ export const QUEUE_BROWSER_HTML = `
       let isCapturing = false;
       const detectActionsGeminiBtn = document.getElementById("detectActionsGeminiBtn");
       const captureActionsDOMBtn = document.getElementById("captureActionsDOMBtn");
+      const drawPanelAndDetectActionsBtn = document.getElementById("drawPanelAndDetectActionsBtn");
       const detectPagesBtn = document.getElementById("detectPagesBtn");
       const drawPanelBtn = document.getElementById("drawPanelBtn");
       const drawPanelMenu = document.getElementById("drawPanelMenu");
@@ -868,6 +839,27 @@ export const QUEUE_BROWSER_HTML = `
         }
       });
       
+      drawPanelAndDetectActionsBtn.addEventListener("click", async () => {
+        if (isCapturing || isGeminiDetecting) {
+          showToast('⚠️ Đang xử lý, vui lòng đợi...');
+          return;
+        }
+        if (!selectedPanelId) {
+          showToast('⚠️ Vui lòng chọn panel trước!');
+          return;
+        }
+        
+        isCapturing = true;
+        
+        try {
+          if (window.drawPanelAndDetectActions) {
+            await window.drawPanelAndDetectActions();
+          }
+        } finally {
+          isCapturing = false;
+        }
+      });
+      
       detectPagesBtn.addEventListener("click", async () => {
         if (isCapturing || isGeminiDetecting) {
           showToast('⚠️ Đang xử lý, vui lòng đợi...');
@@ -917,12 +909,24 @@ export const QUEUE_BROWSER_HTML = `
           
           isDrawingPanel = true;
           
+          const originalDrawPanelText = drawPanelBtn.textContent;
+          if (mode === 'DRAW_NEW') {
+            drawPanelBtn.disabled = true;
+            drawPanelBtn.style.opacity = '0.6';
+            drawPanelBtn.style.cursor = 'not-allowed';
+            drawPanelBtn.textContent = '⏳ Creating...';
+          }
+          
           try {
             if (mode === 'DRAW_NEW') {
               if (window.drawPanel) {
                 const result = await window.drawPanel(mode);
                 
                 isDrawingPanel = false;
+                drawPanelBtn.disabled = false;
+                drawPanelBtn.style.opacity = '1';
+                drawPanelBtn.style.cursor = 'pointer';
+                drawPanelBtn.textContent = originalDrawPanelText;
               }
             } else if (mode === 'USE_BEFORE') {
               if (window.useBeforePanel) {
@@ -934,6 +938,12 @@ export const QUEUE_BROWSER_HTML = `
           } catch (err) {
             console.error('Draw panel error:', err);
             isDrawingPanel = false;
+            if (mode === 'DRAW_NEW') {
+              drawPanelBtn.disabled = false;
+              drawPanelBtn.style.opacity = '1';
+              drawPanelBtn.style.cursor = 'pointer';
+              drawPanelBtn.textContent = originalDrawPanelText;
+            }
           }
         });
       });
@@ -1099,13 +1109,13 @@ export const QUEUE_BROWSER_HTML = `
           };
           const selectedNode = findNodeInTree(panelTreeData, selectedPanelId);
           if (selectedNode?.item_category !== 'PANEL') {
-            showToast('⚠️ Chỉ PANEL mới có thể Detect Pages!');
+            showToast('⚠️ Chỉ PANEL mới có thể Draw Panel & Detect Actions!');
             return;
           }
           isCapturing = true;
           try {
-            if (window.detectPages) {
-              await window.detectPages();
+            if (window.drawPanelAndDetectActions) {
+              await window.drawPanelAndDetectActions();
             }
           } finally {
             isCapturing = false;
@@ -1150,7 +1160,7 @@ export const QUEUE_BROWSER_HTML = `
         
         const expandIcon = document.createElement('span');
         expandIcon.className = 'tree-expand';
-        if (node.item_category === 'PANEL' || node.item_category === 'PAGE') {
+        if (node.item_category === 'PANEL') {
           if (node.children && node.children.length > 0) {
             expandIcon.textContent = '▶';
           } else {
@@ -1165,17 +1175,13 @@ export const QUEUE_BROWSER_HTML = `
         
         const nodeDot = document.createElement('span');
         nodeDot.className = 'tree-node-dot';
-        if (node.item_category === 'PAGE') {
-          nodeDot.style.marginLeft = '4px';
-        } else if (node.item_category === 'ACTION') {
+        if (node.item_category === 'ACTION') {
           nodeDot.style.marginLeft = '8px';
         }
         
         let dotColor;
         if (node.item_category === 'PANEL') {
           dotColor = '#ff5252';
-        } else if (node.item_category === 'PAGE') {
-          dotColor = '#ff9800';
         } else {
           dotColor = '#4caf50';
         }
@@ -1237,20 +1243,6 @@ export const QUEUE_BROWSER_HTML = `
         }
         
         contentDiv.addEventListener('click', () => {
-          const loadingOverlay = document.getElementById('loading-overlay');
-          if (loadingOverlay) {
-            loadingOverlay.classList.add('show');
-            
-            if (window.__loadingTimeout) {
-              clearTimeout(window.__loadingTimeout);
-            }
-            
-            window.__loadingTimeout = setTimeout(() => {
-              console.log('⚠️ Loading timeout (30s), hiding overlay');
-              loadingOverlay.classList.remove('show');
-              window.__loadingTimeout = null;
-            }, 30000);
-          }
           
           if (window.selectPanel) {
             window.selectPanel(node.panel_id);
@@ -1432,6 +1424,14 @@ export const QUEUE_BROWSER_HTML = `
         
         document.body.appendChild(menu);
         
+        const menuRect = menu.getBoundingClientRect();
+        const viewportHeight = window.innerHeight;
+        
+        if (y + menuRect.height > viewportHeight) {
+          const newY = Math.max(10, y - menuRect.height);
+          menu.style.top = \`\${newY}px\`;
+        }
+        
         const closeMenu = (e) => {
           if (!menu.contains(e.target)) {
             menu.remove();
@@ -1555,6 +1555,115 @@ export const QUEUE_BROWSER_HTML = `
         }
       }
       
+      function createEditableItemDetails(evt, titleIcon) {
+        const itemDetailsDiv = document.createElement('div');
+        itemDetailsDiv.className = 'screen item-details-container';
+        itemDetailsDiv.style.background = '#e8f5e9';
+        itemDetailsDiv.style.padding = '8px';
+        itemDetailsDiv.style.borderRadius = '4px';
+        itemDetailsDiv.style.marginTop = '5px';
+        itemDetailsDiv.style.fontSize = '13px';
+        itemDetailsDiv.style.position = 'relative';
+        
+        const titleText = titleIcon + ' Item Details:';
+        let detailsHtml = '<div class="details-content"><strong>' + titleText + '</strong><br>';
+        detailsHtml += '<div class="detail-row"><span class="detail-label">• Category:</span> <span class="detail-value" style="color:#1976d2;font-weight:600" data-field="category">' + evt.item_category + '</span></div>';
+        detailsHtml += '<div class="detail-row"><span class="detail-label">• Name:</span> <span class="detail-value" style="color:#d32f2f;font-weight:600" data-field="name">' + (evt.item_name || '<i style="color:#999">null</i>') + '</span></div>';
+        detailsHtml += '<div class="detail-row"><span class="detail-label">• Type:</span> <span class="detail-value" data-field="type">' + (evt.item_type || '<i style="color:#999">null</i>') + '</span></div>';
+        detailsHtml += '<div class="detail-row"><span class="detail-label">• Verb:</span> <span class="detail-value" data-field="verb">' + (evt.item_verb || '<i style="color:#999">null</i>') + '</span></div>';
+        detailsHtml += '<div class="detail-row"><span class="detail-label">• Content:</span> <span class="detail-value" data-field="content">' + (evt.item_content ? '<span style="color:#388e3c">' + evt.item_content + '</span>' : '<i style="color:#999">null</i>') + '</span></div>';
+        detailsHtml += '</div>';
+        
+        itemDetailsDiv.innerHTML = detailsHtml;
+        
+        const editBtn = document.createElement('button');
+        editBtn.textContent = '✏️ Edit';
+        editBtn.style.cssText = 'position:absolute;top:8px;right:8px;padding:4px 8px;font-size:11px;cursor:pointer;background:#2196f3;color:white;border:none;border-radius:3px;';
+        editBtn.onclick = () => toggleEditMode(itemDetailsDiv, evt);
+        itemDetailsDiv.appendChild(editBtn);
+        
+        return itemDetailsDiv;
+      }
+      
+      function toggleEditMode(container, evt) {
+        const detailsContent = container.querySelector('.details-content');
+        const editBtn = container.querySelector('button');
+        
+        if (container.classList.contains('edit-mode')) {
+          return;
+        }
+        
+        container.classList.add('edit-mode');
+        
+        const nameVal = evt.item_name || '';
+        const typeVal = evt.item_type || '';
+        const verbVal = evt.item_verb || '';
+        const contentVal = evt.item_content || '';
+        
+        let editHtml = '<strong>🎯 Item Details:</strong><br>';
+        editHtml += '<div style="margin:5px 0"><span class="detail-label">• Category:</span> <span style="color:#1976d2;font-weight:600">' + evt.item_category + '</span></div>';
+        editHtml += '<div style="margin:5px 0"><span class="detail-label">• Name:</span> <input type="text" data-field="name" value="' + nameVal + '" style="width:70%;padding:2px;border:1px solid #ccc;border-radius:3px;"></div>';
+        editHtml += '<div style="margin:5px 0"><span class="detail-label">• Type:</span> <input type="text" data-field="type" value="' + typeVal + '" style="width:70%;padding:2px;border:1px solid #ccc;border-radius:3px;"></div>';
+        editHtml += '<div style="margin:5px 0"><span class="detail-label">• Verb:</span> <input type="text" data-field="verb" value="' + verbVal + '" style="width:70%;padding:2px;border:1px solid #ccc;border-radius:3px;"></div>';
+        editHtml += '<div style="margin:5px 0"><span class="detail-label">• Content:</span> <input type="text" data-field="content" value="' + contentVal + '" style="width:70%;padding:2px;border:1px solid #ccc;border-radius:3px;"></div>';
+        
+        detailsContent.innerHTML = editHtml;
+        
+        editBtn.remove();
+        
+        const saveBtn = document.createElement('button');
+        saveBtn.textContent = '💾 Save';
+        saveBtn.style.cssText = 'position:absolute;top:8px;right:70px;padding:4px 8px;font-size:11px;cursor:pointer;background:#4caf50;color:white;border:none;border-radius:3px;';
+        saveBtn.onclick = async () => await saveItemDetails(container, evt);
+        container.appendChild(saveBtn);
+        
+        const cancelBtn = document.createElement('button');
+        cancelBtn.textContent = '❌ Cancel';
+        cancelBtn.style.cssText = 'position:absolute;top:8px;right:8px;padding:4px 8px;font-size:11px;cursor:pointer;background:#f44336;color:white;border:none;border-radius:3px;';
+        cancelBtn.onclick = () => cancelEditMode(container, evt);
+        container.appendChild(cancelBtn);
+      }
+      
+      async function saveItemDetails(container, evt) {
+        const nameInput = container.querySelector('input[data-field="name"]');
+        const typeInput = container.querySelector('input[data-field="type"]');
+        const verbInput = container.querySelector('input[data-field="verb"]');
+        const contentInput = container.querySelector('input[data-field="content"]');
+        
+        const updates = {
+          name: nameInput.value.trim(),
+          type: typeInput.value.trim(),
+          verb: verbInput.value.trim(),
+          content: contentInput.value.trim()
+        };
+        
+        if (window.updateItemDetails) {
+          await window.updateItemDetails(evt.panel_id, updates);
+        }
+      }
+      
+      function cancelEditMode(container, evt) {
+        container.classList.remove('edit-mode');
+        const detailsContent = container.querySelector('.details-content');
+        
+        let detailsHtml = '<strong>🎯 Item Details:</strong><br>';
+        detailsHtml += '<div class="detail-row"><span class="detail-label">• Category:</span> <span class="detail-value" style="color:#1976d2;font-weight:600" data-field="category">' + evt.item_category + '</span></div>';
+        detailsHtml += '<div class="detail-row"><span class="detail-label">• Name:</span> <span class="detail-value" style="color:#d32f2f;font-weight:600" data-field="name">' + (evt.item_name || '<i style="color:#999">null</i>') + '</span></div>';
+        detailsHtml += '<div class="detail-row"><span class="detail-label">• Type:</span> <span class="detail-value" data-field="type">' + (evt.item_type || '<i style="color:#999">null</i>') + '</span></div>';
+        detailsHtml += '<div class="detail-row"><span class="detail-label">• Verb:</span> <span class="detail-value" data-field="verb">' + (evt.item_verb || '<i style="color:#999">null</i>') + '</span></div>';
+        detailsHtml += '<div class="detail-row"><span class="detail-label">• Content:</span> <span class="detail-value" data-field="content">' + (evt.item_content ? '<span style="color:#388e3c">' + evt.item_content + '</span>' : '<i style="color:#999">null</i>') + '</span></div>';
+        
+        detailsContent.innerHTML = detailsHtml;
+        
+        container.querySelectorAll('button').forEach(btn => btn.remove());
+        
+        const editBtn = document.createElement('button');
+        editBtn.textContent = '✏️ Edit';
+        editBtn.style.cssText = 'position:absolute;top:8px;right:8px;padding:4px 8px;font-size:11px;cursor:pointer;background:#2196f3;color:white;border:none;border-radius:3px;';
+        editBtn.onclick = () => toggleEditMode(container, evt);
+        container.appendChild(editBtn);
+      }
+      
       async function handlePanelSelected(evt) {
         selectedPanelId = evt.panel_id;
         renderPanelTree();
@@ -1582,13 +1691,7 @@ export const QUEUE_BROWSER_HTML = `
           if (selectedNode.item_category === 'PANEL') {
             detectActionsGeminiBtn.style.display = 'none';
             captureActionsDOMBtn.style.display = 'none';
-            detectPagesBtn.style.display = 'inline-block';
-            drawPanelBtn.style.display = 'none';
-            clearAllClicksBtn.style.display = 'none';
-            importCookiesBtn.style.display = 'none';
-          } else if (selectedNode.item_category === 'PAGE') {
-            detectActionsGeminiBtn.style.display = 'inline-block';
-            captureActionsDOMBtn.style.display = 'inline-block';
+            drawPanelAndDetectActionsBtn.style.display = 'inline-block';
             detectPagesBtn.style.display = 'none';
             drawPanelBtn.style.display = 'none';
             clearAllClicksBtn.style.display = 'none';
@@ -1596,6 +1699,7 @@ export const QUEUE_BROWSER_HTML = `
           } else if (selectedNode.item_category === 'ACTION') {
             detectActionsGeminiBtn.style.display = 'none';
             captureActionsDOMBtn.style.display = 'none';
+            drawPanelAndDetectActionsBtn.style.display = 'none';
             detectPagesBtn.style.display = 'none';
             drawPanelBtn.style.display = 'inline-block';
             clearAllClicksBtn.style.display = 'inline-block';
@@ -1604,6 +1708,7 @@ export const QUEUE_BROWSER_HTML = `
         } else {
           detectActionsGeminiBtn.style.display = 'none';
           captureActionsDOMBtn.style.display = 'none';
+          drawPanelAndDetectActionsBtn.style.display = 'none';
           detectPagesBtn.style.display = 'none';
           drawPanelBtn.style.display = 'none';
           clearAllClicksBtn.style.display = 'none';
@@ -1620,10 +1725,29 @@ export const QUEUE_BROWSER_HTML = `
           existingStepEvent.remove();
         }
         
+        const existingActionDetails = container.querySelector('.event[data-event-type="action_details"]');
+        if (existingActionDetails) {
+          existingActionDetails.remove();
+        }
+        
         if (!evt.panel_id) {
           const existingClickEvents = Array.from(container.querySelectorAll('.event[data-event-type="click"]'));
           existingClickEvents.forEach(el => el.remove());
           return;
+        }
+        
+        if (evt.item_category === 'ACTION') {
+          console.log('🎯 ACTION detected, evt:', evt);
+          
+          const actionDiv = document.createElement('div');
+          actionDiv.className = 'event';
+          actionDiv.style.position = 'relative';
+          actionDiv.setAttribute('data-timestamp', evt.timestamp || Date.now());
+          actionDiv.setAttribute('data-event-type', 'action_details');
+          
+          const itemDetailsDiv = createEditableItemDetails(evt, '🎯');
+          actionDiv.appendChild(itemDetailsDiv);
+          container.appendChild(actionDiv);
         }
         
         if (evt.screenshot) {
@@ -1717,6 +1841,11 @@ export const QUEUE_BROWSER_HTML = `
           });
           panelDiv.appendChild(img);
           
+          if (evt.item_category === 'PANEL' || evt.item_category === 'ACTION' || evt.item_category === 'PAGE') {
+            const itemDetailsDiv = createEditableItemDetails(evt, '📋');
+            panelDiv.appendChild(itemDetailsDiv);
+          }
+          
           const hasActions = evt.actions && evt.actions.length > 0;
           const isDetecting = evt.gemini_detecting === true;
           
@@ -1802,10 +1931,10 @@ export const QUEUE_BROWSER_HTML = `
             panelDiv.appendChild(actionsDiv);
           }
           
-          if (evt.metadata && evt.metadata.w && evt.metadata.h) {
+          if (evt.metadata && evt.metadata.global_pos) {
             const sizeDiv = document.createElement('div');
             sizeDiv.className = 'screen';
-            sizeDiv.innerHTML = '<strong>Size:</strong> ' + evt.metadata.w + 'x' + evt.metadata.h;
+            sizeDiv.innerHTML = '<strong>Size:</strong> ' + evt.metadata.global_pos.w + 'x' + evt.metadata.global_pos.h;
             panelDiv.appendChild(sizeDiv);
           }
           

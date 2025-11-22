@@ -24,7 +24,7 @@ async function getCaptureWebsite() {
 }
 
 
-export async function captureScreenshot(page, asType = "base64", fullPage = false, skipViewportRestore = false) {
+export async function captureScreenshot(page, asType = "base64", fullPage = false, skipViewportRestore = false, progressCallback = null) {
     if (!page) return null;
 
     const shouldUseFullPage = fullPage === true || fullPage === "auto";
@@ -50,8 +50,8 @@ export async function captureScreenshot(page, asType = "base64", fullPage = fals
                 width: 1920,
                 height: 1080,
                 scaleFactor: 1,
-            });
-            
+            }, progressCallback);
+
             if (!buffer || buffer.length === 0) {
                 console.log('⚠️ Full page capture failed, fallback to viewport');
                 await page.setViewport(originalViewport);
@@ -60,7 +60,7 @@ export async function captureScreenshot(page, asType = "base64", fullPage = fals
                 }
                 return await page.screenshot({ encoding: "base64" });
             }
-            
+
             let screenshot;
             if (asType === "buffer") {
                 screenshot = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer);
@@ -100,7 +100,7 @@ export async function captureScreenshot(page, asType = "base64", fullPage = fals
                     screenshot: fallbackScreenshot,
                     imageWidth: metadata.width,
                     imageHeight: metadata.height,
-                    restoreViewport: async () => {}
+                    restoreViewport: async () => { }
                 };
             }
 
@@ -120,7 +120,7 @@ export async function captureScreenshot(page, asType = "base64", fullPage = fals
             screenshot: viewportScreenshot,
             imageWidth: metadata.width,
             imageHeight: metadata.height,
-            restoreViewport: async () => {}
+            restoreViewport: async () => { }
         };
     }
 
@@ -138,12 +138,12 @@ export async function resizeBase64(base64, maxWidth = 640) {
 
 export async function drawPanelBoundingBoxes(base64, panels, color = "#00ff00", stroke = 3) {
     if (!panels || panels.length === 0) return base64;
-    
+
     const imgBuffer = Buffer.from(base64, "base64");
     const metadata = await sharp(imgBuffer).metadata();
     const w = metadata.width;
     const h = metadata.height;
-    
+
     let rectangles = '';
     for (const panel of panels) {
         if (Array.isArray(panel.actions)) {
@@ -161,26 +161,26 @@ export async function drawPanelBoundingBoxes(base64, panels, color = "#00ff00", 
             }
         }
     }
-    
+
     if (!rectangles) return base64;
-    
+
     const svg = `
     <svg width="${w}" height="${h}">
       ${rectangles}
     </svg>
   `;
-    
+
     const out = await sharp(imgBuffer)
         .composite([{ input: Buffer.from(svg), left: 0, top: 0 }])
         .png()
         .toBuffer();
-    
+
     return out.toString("base64");
 }
 
 export async function cropBase64Image(base64, cropPos) {
     if (!base64 || !cropPos) return base64;
-    
+
     try {
         const buffer = Buffer.from(base64, "base64");
         const cropped = await sharp(buffer)
@@ -192,7 +192,7 @@ export async function cropBase64Image(base64, cropPos) {
             })
             .png()
             .toBuffer();
-        
+
         return cropped.toString("base64");
     } catch (err) {
         console.error('Failed to crop image:', err);

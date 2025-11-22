@@ -19,17 +19,17 @@ const __dirname = dirname(__filename);
 
 export async function initBrowsers(tracker, startUrl) {
     tracker.urlTracking = startUrl;
-    
+
     tracker.wss = new WebSocketServer({ port: 8081 });
     tracker.wss.on("connection", () => console.log("📡 QueueScreen connected"));
     const { width, height } = await getScreenSize();
     const trackingWidth = Math.floor(width * 0.7);
     const queueWidth = Math.floor(width * 0.3);
-    
+
     console.log(`🖥️ Screen: ${width}x${height}`);
     console.log(`📐 Tracking browser: ${trackingWidth}x${height} at (0, 0)`);
     console.log(`📐 Queue browser: ${queueWidth}x${height} at (${trackingWidth}, 0)`);
-    
+
     console.log("🚀 Launching Real Browser (bypass bot detection)...");
     const { browser: trackingBrowser, page: initialPage } = await connect({
         headless: false,
@@ -49,7 +49,7 @@ export async function initBrowsers(tracker, startUrl) {
         },
         disableXvfb: true
     });
-    
+
     tracker.browser = trackingBrowser;
     tracker.page = initialPage;
     await tracker.page.setJavaScriptEnabled(true);
@@ -81,10 +81,10 @@ export async function initBrowsers(tracker, startUrl) {
     tracker.queuePage = queuePages[0];
     await tracker.queuePage.setJavaScriptEnabled(true);
     await tracker.queuePage.setContent(QUEUE_BROWSER_HTML);
-    
+
     const handlers = createQueuePageHandlers(tracker, width, height, trackingWidth, queueWidth);
     tracker._queueHandlers = handlers;
-    
+
     await tracker.queuePage.exposeFunction("quitApp", handlers.quitApp);
     await tracker.queuePage.exposeFunction("saveEvents", handlers.saveEvents);
     await tracker.queuePage.exposeFunction("resizeQueueBrowser", handlers.resizeQueueBrowser);
@@ -101,11 +101,16 @@ export async function initBrowsers(tracker, startUrl) {
     await tracker.queuePage.exposeFunction("resetActionStep", handlers.resetActionStep);
     await tracker.queuePage.exposeFunction("renamePanel", handlers.renamePanel);
     await tracker.queuePage.exposeFunction("renameActionByAI", handlers.renameActionByAI);
+    await tracker.queuePage.exposeFunction("getActionItem", async (actionId) => {
+        return await tracker.dataItemManager.getItem(actionId);
+    });
     await tracker.queuePage.exposeFunction("getClickEventsForPanel", handlers.getClickEventsForPanel);
     await tracker.queuePage.exposeFunction("manualCaptureAI", handlers.manualCaptureAI);
     await tracker.queuePage.exposeFunction("captureActions", handlers.captureActions);
     await tracker.queuePage.exposeFunction("manualCaptureAIScrolling", handlers.manualCaptureAIScrolling);
     await tracker.queuePage.exposeFunction("captureActionsScrolling", handlers.captureActionsScrolling);
+    await tracker.queuePage.exposeFunction("drawPanelAndDetectActions", handlers.drawPanelAndDetectActions);
+    await tracker.queuePage.exposeFunction("confirmPanelCrop", handlers.confirmPanelCrop);
     await tracker.queuePage.exposeFunction("detectPages", handlers.detectPages);
     await tracker.queuePage.exposeFunction("selectPanel", handlers.selectPanel);
     await tracker.queuePage.exposeFunction("getPanelTree", handlers.getPanelTree);
@@ -120,13 +125,14 @@ export async function initBrowsers(tracker, startUrl) {
     await tracker.queuePage.exposeFunction("importCookiesFromJson", handlers.importCookiesFromJson);
     await tracker.queuePage.exposeFunction("updatePanelImageAndCoordinates", handlers.updatePanelImageAndCoordinates);
     await tracker.queuePage.exposeFunction("createManualPage", handlers.createManualPage);
+    await tracker.queuePage.exposeFunction("updateItemDetails", handlers.updateItemDetails);
 
     await tracker.page.goto(startUrl, { waitUntil: 'networkidle2', timeout: 60000 });
     const websites = await fetchWebsiteList();
-    
+
     const __filename = fileURLToPath(import.meta.url);
     const sessionsPath = path.join(path.dirname(path.dirname(path.dirname(__filename))), 'sessions');
-    
+
     let allSessions = [];
     try {
         const sessionFolders = await fsp.readdir(sessionsPath);
@@ -137,7 +143,7 @@ export async function initBrowsers(tracker, startUrl) {
                 const info = JSON.parse(infoContent);
                 const timestamps = info.timestamps || [];
                 const lastTimestamp = timestamps.length > 0 ? timestamps[timestamps.length - 1] : Date.now();
-                
+
                 const date = new Date(lastTimestamp);
                 const dd = String(date.getDate()).padStart(2, '0');
                 const mm = String(date.getMonth() + 1).padStart(2, '0');
@@ -146,7 +152,7 @@ export async function initBrowsers(tracker, startUrl) {
                 const min = String(date.getMinutes()).padStart(2, '0');
                 const ss = String(date.getSeconds()).padStart(2, '0');
                 const formattedTime = `${dd}/${mm}/${yyyy} ${hh}:${min}:${ss}`;
-                
+
                 allSessions.push({
                     folder: path.join(sessionsPath, folder),
                     toolName: info.toolCode,
@@ -158,7 +164,7 @@ export async function initBrowsers(tracker, startUrl) {
         allSessions.sort((a, b) => b.folder.localeCompare(a.folder));
     } catch (err) {
     }
-    
+
     await injectWebsiteSelector(tracker.page, websites, allSessions);
     tracker.page.trackerInstance = tracker;
 }

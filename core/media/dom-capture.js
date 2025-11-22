@@ -1,22 +1,22 @@
 export async function captureActionsFromDOM(page, cropArea = null, fullPage = false, imageWidth = null, imageHeight = null) {
     if (!page) return [];
-    
+
     const scrollPosition = await page.evaluate(() => {
         return { x: window.scrollX || window.pageXOffset, y: window.scrollY || window.pageYOffset };
     });
-    
+
     if (fullPage) {
         try {
             await page.waitForLoadState('networkidle', { timeout: 3000 });
         } catch (err) {
         }
-        
+
         const pageHeight = await page.evaluate(() => document.documentElement.scrollHeight);
         const viewportHeight = await page.evaluate(() => window.innerHeight);
-        
+
         await page.evaluate(() => window.scrollTo(0, 0));
         await new Promise(r => setTimeout(r, 300));
-        
+
         const scrollSteps = Math.ceil(pageHeight / viewportHeight);
         for (let i = 1; i < scrollSteps; i++) {
             await page.evaluate((step, vh) => {
@@ -24,67 +24,72 @@ export async function captureActionsFromDOM(page, cropArea = null, fullPage = fa
             }, i, viewportHeight);
             await new Promise(r => setTimeout(r, 200));
         }
-        
+
         await page.evaluate(() => window.scrollTo(0, 0));
         await new Promise(r => setTimeout(r, 800));
     }
-    
+
     const actions = await page.evaluate((cropArea, fullPage, imageWidth, imageHeight) => {
         const interactiveElements = [];
         const viewportWidth = window.innerWidth;
         const viewportHeight = window.innerHeight;
         const documentWidth = document.documentElement.scrollWidth;
         const documentHeight = document.documentElement.scrollHeight;
-        
+
         const isInteractive = (el) => {
             const tag = el.tagName?.toLowerCase();
             const role = el.getAttribute('role');
             return tag === 'button' ||
-                   tag === 'a' ||
-                   (tag === 'input' && !['hidden', 'submit'].includes(el.type)) ||
-                   tag === 'select' ||
-                   tag === 'textarea' ||
-                   role === 'button' ||
-                   role === 'link' ||
-                   el.onclick;
+                tag === 'a' ||
+                (tag === 'input' && !['hidden', 'submit'].includes(el.type)) ||
+                tag === 'select' ||
+                tag === 'textarea' ||
+                role === 'button' ||
+                role === 'link' ||
+                el.onclick;
         };
-        
+
         const getText = (el) => {
-            return el.getAttribute('aria-label')?.trim() ||
-                   (typeof el.placeholder === 'string' ? el.placeholder.trim() : '') ||
-                   (el.value ? String(el.value).trim() : '') ||
-                   (typeof el.alt === 'string' ? el.alt.trim() : '') ||
-                   (el.innerText ? String(el.innerText).trim().substring(0, 50) : '') ||
-                   el.tagName.toLowerCase();
+            const normalizeWhitespace = (text) => {
+                if (!text) return '';
+                return text.trim().replace(/\s+/g, ' ');
+            };
+
+            return normalizeWhitespace(el.getAttribute('aria-label')) ||
+                normalizeWhitespace(el.placeholder) ||
+                normalizeWhitespace(el.value) ||
+                normalizeWhitespace(el.alt) ||
+                normalizeWhitespace(el.innerText?.substring(0, 50)) ||
+                el.tagName.toLowerCase();
         };
-        
+
         const isInCropArea = (rect, cropArea) => {
             if (!cropArea) return true;
-            
+
             const elementCenterX = rect.left + rect.width / 2;
             const elementCenterY = rect.top + rect.height / 2;
-            
+
             return elementCenterX >= cropArea.x &&
-                   elementCenterX <= cropArea.x + cropArea.width &&
-                   elementCenterY >= cropArea.y &&
-                   elementCenterY <= cropArea.y + cropArea.height;
+                elementCenterX <= cropArea.x + cropArea.width &&
+                elementCenterY >= cropArea.y &&
+                elementCenterY <= cropArea.y + cropArea.height;
         };
-        
+
         const traverse = (element) => {
             if (!element) return;
-            
+
             if (isInteractive(element)) {
                 const rect = element.getBoundingClientRect();
-                
+
                 const maxWidth = fullPage ? documentWidth : viewportWidth;
                 const maxHeight = fullPage ? documentHeight : viewportHeight;
-                
+
                 if (rect.width > 0 && rect.height > 0 &&
                     rect.left >= 0 && rect.top >= 0 &&
                     rect.right <= maxWidth &&
                     rect.bottom <= maxHeight &&
                     isInCropArea(rect, cropArea)) {
-                    
+
                     let relativeX, relativeY;
                     if (cropArea) {
                         relativeX = rect.left - cropArea.x;
@@ -93,21 +98,21 @@ export async function captureActionsFromDOM(page, cropArea = null, fullPage = fa
                         relativeX = rect.left;
                         relativeY = rect.top;
                     }
-                    
+
                     let refWidth, refHeight, scaledX, scaledY, scaledW, scaledH;
                     if (imageWidth && imageHeight) {
                         const refDimHeight = fullPage ? imageHeight : viewportHeight;
                         const scaleX = imageWidth / viewportWidth;
                         const scaleY = imageHeight / refDimHeight;
-                        
+
                         scaledX = relativeX * scaleX;
                         scaledY = relativeY * scaleY;
                         scaledW = rect.width * scaleX;
                         scaledH = rect.height * scaleY;
-                        
+
                         refWidth = cropArea ? cropArea.width : imageWidth;
                         refHeight = cropArea ? cropArea.height : imageHeight;
-                        
+
                     } else {
                         scaledX = relativeX;
                         scaledY = relativeY;
@@ -116,14 +121,14 @@ export async function captureActionsFromDOM(page, cropArea = null, fullPage = fa
                         refWidth = cropArea ? cropArea.width : (fullPage ? viewportWidth : viewportWidth);
                         refHeight = cropArea ? cropArea.height : (fullPage ? documentHeight : viewportHeight);
                     }
-                    
+
                     const elementText = getText(element);
                     const elementTag = element.tagName.toLowerCase();
                     const ariaLabel = element.getAttribute('aria-label');
                     const placeholder = element.getAttribute('placeholder');
                     const value = element.value || element.getAttribute('value');
                     const contentAttr = ariaLabel || placeholder || value;
-                    
+
                     interactiveElements.push({
                         action_id: 'action_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9),
                         action_name: elementText || 'Unnamed',
@@ -139,30 +144,30 @@ export async function captureActionsFromDOM(page, cropArea = null, fullPage = fa
                     });
                 }
             }
-            
+
             Array.from(element.children || []).forEach(traverse);
         };
-        
+
         traverse(document.body);
-        
+
         return interactiveElements;
     }, cropArea, fullPage, imageWidth, imageHeight);
-    
+
     if (fullPage) {
         await page.evaluate((pos) => window.scrollTo(pos.x, pos.y), scrollPosition);
     }
-    
+
     return actions;
 }
 
 export function filterActionsByCropArea(actions, cropPos) {
     if (!cropPos || !actions) return actions;
-    
+
     return actions.filter(action => {
         const pos = action.action_pos;
         const centerX = pos.x + pos.w / 2;
         const centerY = pos.y + pos.h / 2;
-        
+
         return (
             centerX >= cropPos.x &&
             centerX <= cropPos.x + cropPos.w &&
@@ -184,7 +189,7 @@ export function filterActionsByCropArea(actions, cropPos) {
 
 export function getElementName(element) {
     if (!element) return 'Unnamed';
-    
+
     const ariaLabel = element.getAttribute?.('aria-label');
     const placeholder = typeof element.placeholder === 'string' ? element.placeholder : '';
     const value = element.value ? String(element.value) : '';
@@ -192,7 +197,7 @@ export function getElementName(element) {
     const text = element.textContent ? String(element.textContent).trim().substring(0, 50) : '';
     const id = element.id || '';
     const tagName = element.tagName?.toLowerCase() || '';
-    
+
     return ariaLabel || placeholder || value || alt || text || id || tagName || 'Unnamed';
 }
 

@@ -4,7 +4,7 @@ import { captureActionsFromDOM } from '../media/dom-capture.js';
 
 export async function askGemini(tracker, screenshotB64) {
     if (!screenshotB64 || !tracker.geminiSession) return;
-    
+
     const responseSchema = {
         type: "object",
         required: ["actions"],
@@ -34,7 +34,7 @@ export async function askGemini(tracker, screenshotB64) {
             }
         }
     };
-    
+
     const turns = [
         'Please use the following rules for interpreting the visual elements and generating bounding boxes:\n' +
         '\n' +
@@ -67,7 +67,7 @@ export async function askGemini(tracker, screenshotB64) {
             },
         },
     ];
-    
+
     tracker.geminiSession.sendClientContent({
         turns: turns,
         responseSchema: responseSchema
@@ -76,10 +76,10 @@ export async function askGemini(tracker, screenshotB64) {
 
 export async function askGeminiREST(tracker, screenshotB64) {
     if (!screenshotB64) return null;
-    
+
     const { ENV } = await import('../config/env.js');
-    
-    const prompt = 
+
+    const prompt =
         'Please use the following rules for interpreting the visual elements and generating bounding boxes:\n' +
         '\n' +
         '**Action Bounding Rules:**\n' +
@@ -104,7 +104,7 @@ export async function askGeminiREST(tracker, screenshotB64) {
         '## Notes\n' +
         '- Normalized positions should be relative to the Image (0,0 top-left; 1000,1000 bottom-right).\n' +
         '- The **bounding boxes** of actions should be **accurately detected** based on their visible location in the Image.';
-    
+
     const responseSchema = {
         type: "object",
         required: ["actions"],
@@ -134,16 +134,16 @@ export async function askGeminiREST(tracker, screenshotB64) {
             }
         }
     };
-    
+
     const requestBody = {
         contents: [{
             parts: [
                 { text: prompt },
-                { 
-                    inline_data: { 
-                        mime_type: 'image/png', 
-                        data: screenshotB64 
-                    } 
+                {
+                    inline_data: {
+                        mime_type: 'image/png',
+                        data: screenshotB64
+                    }
                 }
             ]
         }],
@@ -152,7 +152,7 @@ export async function askGeminiREST(tracker, screenshotB64) {
             response_schema: responseSchema
         }
     };
-    
+
     try {
         const modelName = ENV.GEMINI_MODEL_REST || 'gemini-2.5-flash';
         const response = await fetch(
@@ -166,28 +166,28 @@ export async function askGeminiREST(tracker, screenshotB64) {
                 body: JSON.stringify(requestBody)
             }
         );
-        
+
         if (!response.ok) {
             const errorText = await response.text();
             console.error('Gemini API error response:', errorText);
             throw new Error(`Gemini API error: ${response.status} ${response.statusText}`);
         }
-        
+
         const data = await response.json();
         console.log('🔵 Gemini REST Response received');
-        
+
         let jsonText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-        
+
         if (!jsonText) {
             console.warn('No text in Gemini response');
             return null;
         }
-        
+
         jsonText = jsonText.trim()
             .replace(/^```json\s*/i, '')
             .replace(/^```/, '')
             .replace(/```$/i, '');
-        
+
         return jsonText;
     } catch (err) {
         console.error('Gemini REST API failed:', err);
@@ -221,7 +221,7 @@ export async function handleTurn(tracker) {
             tracker.geminiMessageQueue.clear();
 
             let cleanJson = allText.replace(/^[\s\S]*?(\[\s*{)/, '$1');
-            
+
             const lastBracket = cleanJson.lastIndexOf(']');
             if (lastBracket !== -1) {
                 cleanJson = cleanJson.substring(0, lastBracket + 1);
@@ -245,19 +245,19 @@ export async function detectScreenByGemini(tracker) {
         if (scr.screenshot) {
             try {
                 tracker.geminiAsking = true;
-                
+
                 const sharp = (await import('sharp')).default;
                 const fullBuffer = Buffer.from(scr.screenshot, "base64");
                 const fullMeta = await sharp(fullBuffer).metadata();
-                
+
                 const resizedForGemini = await resizeBase64(scr.screenshot, 640);
-                
+
                 const scaleX = fullMeta.width / 1000;
                 const scaleY = fullMeta.height / 1000;
-                
+
                 const { ENV } = await import('../config/env.js');
                 let geminiText;
-                
+
                 if (ENV.GEMINI_USE_REST === 'true' || ENV.GEMINI_USE_REST === true) {
                     console.log('🔵 Using Gemini REST API');
                     geminiText = await askGeminiREST(tracker, resizedForGemini);
@@ -271,7 +271,7 @@ export async function detectScreenByGemini(tracker) {
                     console.warn('Empty response from Gemini');
                     continue;
                 }
-                
+
                 let geminiJson;
                 try {
                     geminiJson = JSON.parse(geminiText);
@@ -279,24 +279,29 @@ export async function detectScreenByGemini(tracker) {
                     console.warn('Gemini returned non-JSON response:', geminiText.substring(0, 100));
                     continue;
                 }
-                
+
                 let actionsArray = [];
                 if (Array.isArray(geminiJson)) {
                     actionsArray = geminiJson;
                 } else if (geminiJson.actions && Array.isArray(geminiJson.actions)) {
                     actionsArray = geminiJson.actions;
                 }
-                
+
+                const normalizeActionName = (name) => {
+                    if (!name) return 'Unnamed';
+                    return name.trim().replace(/\s+/g, ' ');
+                };
+
                 actionsArray = actionsArray.map(action => {
                     const actionWithId = {
                         ...action,
                         action_id: `action_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-                        action_name: action.action_name || 'Unnamed',
+                        action_name: normalizeActionName(action.action_name),
                         action_type: action.action_type || 'button',
                         action_verb: action.action_verb || 'click',
                         action_content: action.action_content || null
                     };
-                    
+
                     if (Array.isArray(action.action_pos) && action.action_pos.length === 4) {
                         actionWithId.action_pos = {
                             x: action.action_pos[0],
@@ -305,10 +310,10 @@ export async function detectScreenByGemini(tracker) {
                             h: action.action_pos[3]
                         };
                     }
-                    
+
                     return actionWithId;
                 });
-                
+
                 const wrappedJson = [{
                     timestamp: Date.now(),
                     panel_title: "Screen",
@@ -345,18 +350,18 @@ export async function detectScreenByGemini(tracker) {
                 });
 
                 console.log(`🤖 [GEMINI] Detected ${actionsArray.length} interactive elements`);
-                
+
                 if (scr.panel_id && tracker.dataItemManager && tracker.parentPanelManager) {
                     const actionsFromGemini = scaledGeminiJson[0]?.actions || [];
-                    
+
                     const panelItem = await tracker.dataItemManager.getItem(scr.panel_id);
                     let pageNumber = null;
                     let parentPanelId = null;
                     let existingActionIds = [];
-                    
+
                     if (panelItem && panelItem.item_category === 'PAGE') {
                         pageNumber = panelItem.metadata?.p || null;
-                        
+
                         const { promises: fsp } = await import('fs');
                         const path = await import('path');
                         const parentPath = path.join(tracker.sessionFolder, 'myparent_panel.jsonl');
@@ -364,7 +369,7 @@ export async function detectScreenByGemini(tracker) {
                         const allParents = content.trim().split('\n')
                             .filter(line => line.trim())
                             .map(line => JSON.parse(line));
-                        
+
                         for (const parentEntry of allParents) {
                             if (parentEntry.child_pages) {
                                 const pageEntry = parentEntry.child_pages.find(pg => pg.page_id === scr.panel_id);
@@ -379,20 +384,20 @@ export async function detectScreenByGemini(tracker) {
                         const parentEntry = await tracker.parentPanelManager.getPanelEntry(scr.panel_id);
                         existingActionIds = parentEntry?.child_actions || [];
                     }
-                    
+
                     const existingActions = await Promise.all(
                         existingActionIds.map(id => tracker.dataItemManager.getItem(id))
                     );
                     const existingNames = existingActions.filter(Boolean).map(a => a.name);
-                    
+
                     const nameCountMap = new Map();
                     existingNames.forEach(name => {
                         nameCountMap.set(name, (nameCountMap.get(name) || 0) + 1);
                     });
-                    
+
                     for (const action of actionsFromGemini) {
                         let actionName = action.action_name;
-                        
+
                         if (nameCountMap.has(actionName)) {
                             const count = nameCountMap.get(actionName);
                             actionName = `${actionName} (${count + 1})`;
@@ -400,25 +405,24 @@ export async function detectScreenByGemini(tracker) {
                         } else {
                             nameCountMap.set(actionName, 0);
                         }
-                        
+
                         const actionItemId = await tracker.dataItemManager.createAction(
                             actionName,
                             action.action_type || 'button',
                             action.action_verb || 'click',
-                            action.action_content || null,
                             action.action_pos,
                             pageNumber
                         );
-                        
+
                         if (panelItem.item_category === 'PAGE' && parentPanelId) {
                             await tracker.parentPanelManager.addChildActionToPage(parentPanelId, scr.panel_id, actionItemId);
                         } else {
                             await tracker.parentPanelManager.addChildAction(scr.panel_id, actionItemId);
                         }
                     }
-                    
+
                     console.log(`✅ Created ${actionsFromGemini.length} actions in doing_item.jsonl`);
-                    
+
                     if (actionsFromGemini.length === 0 && panelItem.item_category === 'PAGE') {
                         await tracker._broadcast({
                             type: 'show_toast',
@@ -426,7 +430,7 @@ export async function detectScreenByGemini(tracker) {
                         });
                     }
                 }
-                
+
                 const screenshotWithBoxes = await drawPanelBoundingBoxes(scr.screenshot, scaledGeminiJson, '#00aaff', 2);
 
                 if (scr.panel_id) {
@@ -439,20 +443,20 @@ export async function detectScreenByGemini(tracker) {
                         gemini_detecting: false,
                         timestamp: scr.timestamp
                     };
-                    
+
                     if (Array.isArray(scaledGeminiJson[0]?.actions)) {
                         detectedPage.action_list = scaledGeminiJson[0].actions
                             .map(a => a.action_name)
                             .filter(Boolean)
                             .join(', ');
                     }
-                    
+
                     await tracker._broadcast(detectedPage);
-                    
+
                     if (tracker.panelLogManager) {
-                        await tracker._broadcast({ 
-                            type: 'tree_update', 
-                            data: await tracker.panelLogManager.buildTreeStructure() 
+                        await tracker._broadcast({
+                            type: 'tree_update',
+                            data: await tracker.panelLogManager.buildTreeStructure()
                         });
                     }
                 }
@@ -467,75 +471,37 @@ export async function detectScreenByGemini(tracker) {
 
 export async function detectScreenByDOM(tracker, panelId, fullPage = false, imageWidth = null, imageHeight = null, skipDrawingBoundingBox = false) {
     if (!tracker.page || !panelId) return;
-    
+
     tracker.geminiAsking = true;
-    
+
     try {
         console.log('🌐 DOM Capture started');
-        
+
         const panelItem = await tracker.dataItemManager.getItem(panelId);
         if (!panelItem || !panelItem.image_base64) {
             console.error('Panel has no image');
             tracker.geminiAsking = false;
             return [];
         }
-        
+
         const sharp = (await import('sharp')).default;
-        
+
         if (!panelItem.image_base64 || typeof panelItem.image_base64 !== 'string') {
             console.error('❌ Invalid image_base64:', typeof panelItem.image_base64, panelItem.image_base64?.length);
             return [];
         }
-        
-        const fullBuffer = Buffer.from(panelItem.image_base64, "base64");
+
+        const imageBase64 = await tracker.dataItemManager.loadBase64FromFile(panelItem.image_base64);
+
+        const fullBuffer = Buffer.from(imageBase64, "base64");
         const fullMeta = await sharp(fullBuffer).metadata();
-        
-        let displayImage = panelItem.image_base64;
+
+        let displayImage = imageBase64;
         let scaleX, scaleY;
         let actionsToProcess = [];
         let parentPanelEntry = null;
-        
-        if (panelItem.crop_pos) {
-            const { cropBase64Image } = await import('../media/screenshot.js');
-            displayImage = await cropBase64Image(panelItem.image_base64, panelItem.crop_pos);
-            
-            const croppedBuffer = Buffer.from(displayImage, "base64");
-            const croppedMeta = await sharp(croppedBuffer).metadata();
-            
-            scaleX = croppedMeta.width / panelItem.crop_pos.w;
-            scaleY = croppedMeta.height / panelItem.crop_pos.h;
-            
-            const parentDom = await tracker.parentPanelManager.getParentDom(panelId);
-            
-            console.log(`📦 Loading ${parentDom.length} actions from parent_dom`);
-            
-            const filteredActions = parentDom.filter(action => {
-                const pos = action.action_pos;
-                const actionRight = pos.x + pos.w;
-                const actionBottom = pos.y + pos.h;
-                const cropRight = panelItem.crop_pos.x + panelItem.crop_pos.w;
-                const cropBottom = panelItem.crop_pos.y + panelItem.crop_pos.h;
-                
-                return pos.x >= panelItem.crop_pos.x &&
-                       pos.y >= panelItem.crop_pos.y &&
-                       actionRight <= cropRight &&
-                       actionBottom <= cropBottom;
-            });
-            
-            console.log(`✂️ Filtered ${parentDom.length} → ${filteredActions.length} actions inside crop area`);
-            
-            const adjustedActions = filteredActions.map(action => ({
-                ...action,
-                action_pos: {
-                    x: Math.round(action.action_pos.x - panelItem.crop_pos.x),
-                    y: Math.round(action.action_pos.y - panelItem.crop_pos.y),
-                    w: Math.round(action.action_pos.w),
-                    h: Math.round(action.action_pos.h)
-                }
-            }));
-            
-            actionsToProcess = adjustedActions;
-        } else if (panelItem.item_category === 'PAGE') {
+
+        if (panelItem.item_category === 'PAGE') {
             const { promises: fsp } = await import('fs');
             const path = await import('path');
             const parentPath = path.default.join(tracker.sessionFolder, 'myparent_panel.jsonl');
@@ -543,20 +509,20 @@ export async function detectScreenByDOM(tracker, panelId, fullPage = false, imag
             const allParents = content.trim().split('\n')
                 .filter(line => line.trim())
                 .map(line => JSON.parse(line));
-            
-            parentPanelEntry = allParents.find(p => 
+
+            parentPanelEntry = allParents.find(p =>
                 p.child_pages && p.child_pages.some(pg => pg.page_id === panelId)
             );
-            
+
             console.log('📄 PAGE: Auto DOM detection disabled. User must detect via Gemini.');
             actionsToProcess = [];
         } else {
             const domActions = await captureActionsFromDOM(tracker.page, null, fullPage, imageWidth, imageHeight);
             console.log(`🎯 [DOM] Detected ${domActions.length} interactive elements`);
-            
+
             scaleX = fullMeta.width / 1000;
             scaleY = fullMeta.height / 1000;
-            
+
             const scaledDomActions = domActions.map(action => ({
                 ...action,
                 action_pos: {
@@ -566,25 +532,25 @@ export async function detectScreenByDOM(tracker, panelId, fullPage = false, imag
                     h: Math.round(action.action_pos.h * scaleY)
                 }
             }));
-            
+
             actionsToProcess = scaledDomActions;
-            
+
             await tracker.parentPanelManager.updateParentDom(panelId, scaledDomActions);
             console.log(`✅ Saved ${scaledDomActions.length} actions to parent_dom`);
         }
-        
+
         const scaledDomActions = actionsToProcess;
-        
+
         if (scaledDomActions.length === 0 && panelItem.item_category === 'PAGE') {
             await tracker._broadcast({
                 type: 'show_toast',
                 message: '⚠️ DOM không tìm thấy action nào! Hãy thử nút 🤖 Detect Action Backup.'
             });
         }
-        
+
         if (tracker.dataItemManager && tracker.parentPanelManager) {
             let existingActionIds = [];
-            
+
             if (panelItem.item_category === 'PAGE' && parentPanelEntry) {
                 const pageEntry = parentPanelEntry.child_pages.find(pg => pg.page_id === panelId);
                 existingActionIds = pageEntry?.child_actions || [];
@@ -592,25 +558,25 @@ export async function detectScreenByDOM(tracker, panelId, fullPage = false, imag
                 const parentEntry = await tracker.parentPanelManager.getPanelEntry(panelId);
                 existingActionIds = parentEntry?.child_actions || [];
             }
-            
+
             const existingActions = await Promise.all(
                 existingActionIds.map(id => tracker.dataItemManager.getItem(id))
             );
             const existingNames = existingActions.filter(Boolean).map(a => a.name);
-            
+
             const nameCountMap = new Map();
             existingNames.forEach(name => {
                 nameCountMap.set(name, (nameCountMap.get(name) || 0) + 1);
             });
-            
+
             let pageNumber = null;
             if (panelItem.item_category === 'PAGE') {
                 pageNumber = panelItem.metadata?.p || null;
             }
-            
+
             for (const action of scaledDomActions) {
                 let actionName = action.action_name;
-                
+
                 if (nameCountMap.has(actionName)) {
                     const count = nameCountMap.get(actionName);
                     actionName = `${actionName} (${count + 1})`;
@@ -618,41 +584,40 @@ export async function detectScreenByDOM(tracker, panelId, fullPage = false, imag
                 } else {
                     nameCountMap.set(actionName, 0);
                 }
-                
+
                 const actionItemId = await tracker.dataItemManager.createAction(
                     actionName,
                     action.action_type || 'button',
                     action.action_verb || 'click',
-                    action.action_content || null,
                     action.action_pos,
                     pageNumber
                 );
-                
+
                 if (panelItem.item_category === 'PAGE' && parentPanelEntry) {
                     await tracker.parentPanelManager.addChildActionToPage(parentPanelEntry.parent_panel, panelId, actionItemId);
                 } else {
                     await tracker.parentPanelManager.addChildAction(panelId, actionItemId);
                 }
             }
-            
+
             console.log(`✅ Created ${scaledDomActions.length} actions in doing_item.jsonl`);
         }
-        
+
         const geminiResult = [{
             panel_title: panelItem.name,
             actions: scaledDomActions
         }];
-        
+
         let screenshotToSend = displayImage;
         if (!skipDrawingBoundingBox) {
             screenshotToSend = await drawPanelBoundingBoxes(
-                displayImage, 
-                geminiResult, 
-                '#00aaff', 
+                displayImage,
+                geminiResult,
+                '#00aaff',
                 2
             );
         }
-        
+
         const baseEvent = {
             type: 'panel_selected',
             panel_id: panelId,
@@ -660,7 +625,7 @@ export async function detectScreenByDOM(tracker, panelId, fullPage = false, imag
             gemini_detecting: false,
             timestamp: Date.now()
         };
-        
+
         let broadcastEvent;
         if (skipDrawingBoundingBox && panelItem.metadata?.w && panelItem.metadata?.h) {
             broadcastEvent = {
@@ -678,16 +643,16 @@ export async function detectScreenByDOM(tracker, panelId, fullPage = false, imag
                 broadcastEvent.metadata = panelItem.metadata;
             }
         }
-        
+
         await tracker._broadcast(broadcastEvent);
-        
+
         if (tracker.panelLogManager) {
-            await tracker._broadcast({ 
-                type: 'tree_update', 
-                data: await tracker.panelLogManager.buildTreeStructure() 
+            await tracker._broadcast({
+                type: 'tree_update',
+                data: await tracker.panelLogManager.buildTreeStructure()
             });
         }
-        
+
         return scaledDomActions;
     } catch (err) {
         console.error('detectScreenByDOM error:', err);
@@ -699,10 +664,10 @@ export async function detectScreenByDOM(tracker, panelId, fullPage = false, imag
 
 export async function askGeminiForActionRename(croppedImageB64, actionMetadata) {
     if (!croppedImageB64) return null;
-    
+
     const { ENV } = await import('../config/env.js');
-    
-    const prompt = 
+
+    const prompt =
         'Phân tích hình ảnh UI element này và metadata hiện tại để đề xuất thông tin chính xác:\n' +
         '\n' +
         '**Metadata hiện tại:**\n' +
@@ -757,7 +722,7 @@ export async function askGeminiForActionRename(croppedImageB64, actionMetadata) 
         '  "action_verb": "type",\n' +
         '  "action_content": "Type your idea and watch it come to life in minutes"\n' +
         '}';
-    
+
     const responseSchema = {
         type: "object",
         required: ["action_name", "action_type", "action_verb"],
@@ -768,16 +733,16 @@ export async function askGeminiForActionRename(croppedImageB64, actionMetadata) 
             action_content: { type: "string" }
         }
     };
-    
+
     const requestBody = {
         contents: [{
             parts: [
                 { text: prompt },
-                { 
-                    inline_data: { 
-                        mime_type: 'image/png', 
-                        data: croppedImageB64 
-                    } 
+                {
+                    inline_data: {
+                        mime_type: 'image/png',
+                        data: croppedImageB64
+                    }
                 }
             ]
         }],
@@ -786,7 +751,7 @@ export async function askGeminiForActionRename(croppedImageB64, actionMetadata) 
             response_schema: responseSchema
         }
     };
-    
+
     try {
         const modelName = ENV.GEMINI_MODEL_REST || 'gemini-2.5-flash';
         const response = await fetch(
@@ -800,28 +765,28 @@ export async function askGeminiForActionRename(croppedImageB64, actionMetadata) 
                 body: JSON.stringify(requestBody)
             }
         );
-        
+
         if (!response.ok) {
             const errorText = await response.text();
             console.error('Gemini API error response:', errorText);
             throw new Error(`Gemini API error: ${response.status} ${response.statusText}`);
         }
-        
+
         const data = await response.json();
         console.log('🤖 Gemini Rename Response received');
-        
+
         let jsonText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-        
+
         if (!jsonText) {
             console.warn('No text in Gemini rename response');
             return null;
         }
-        
+
         jsonText = jsonText.trim()
             .replace(/^```json\s*/i, '')
             .replace(/^```/, '')
             .replace(/```$/i, '');
-        
+
         const result = JSON.parse(jsonText);
         return result;
     } catch (err) {

@@ -1,5 +1,6 @@
 import { promises as fsp } from 'fs';
 import path from 'path';
+import {calcOverlapBox, isBoxInside} from "../utils/utils.js";
 
 export class ParentPanelManager {
     constructor(sessionFolder) {
@@ -18,7 +19,6 @@ export class ParentPanelManager {
     async createPanelEntry(panelItemId) {
         const entry = {
             parent_panel: panelItemId,
-            child_pages: [],
             child_actions: [],
             child_panels: [],
             parent_dom: []
@@ -244,15 +244,6 @@ export class ParentPanelManager {
         if (!entry) return descendants;
 
         descendants.push(...entry.child_actions);
-        
-        if (entry.child_pages && entry.child_pages.length > 0) {
-            for (const pageEntry of entry.child_pages) {
-                descendants.push(pageEntry.page_id);
-                if (pageEntry.child_actions) {
-                    descendants.push(...pageEntry.child_actions);
-                }
-            }
-        }
 
         for (const childPanelId of entry.child_panels) {
             descendants.push(childPanelId);
@@ -290,6 +281,167 @@ export class ParentPanelManager {
             return entry?.parent_dom || [];
         } catch (err) {
             return [];
+        }
+    }
+
+    async updatePanelEntry(panelItemId, updatedPanelData) {
+        try {
+            const content = await fsp.readFile(this.parentPath, 'utf8');
+            let entries = content.trim().split('\n')
+                .filter(line => line.trim())
+                .map(line => JSON.parse(line));
+
+            const index = entries.findIndex(entry => entry.parent_panel === panelItemId);
+            if (index === -1) {
+                entries.push(updatedPanelData);
+            } else {
+                // 3. Ghi đè dữ liệu
+                entries[index] = updatedPanelData;
+            }
+
+            const jsonlString = entries
+                .map(e => JSON.stringify(e))
+                .join('\n') + '\n';
+
+            await fsp.writeFile(this.parentPath, jsonlString, 'utf8');
+            return true;
+
+        } catch (err) {
+            console.error("updatePanelEntry error:", err);
+            return false;
+        }
+    }
+
+    async getActionInfo(itemIdList) {
+        try {
+            const doingItemPath = path.join(this.sessionFolder, 'doing_item.jsonl');
+            let items = [];
+            try {
+                const itemContent = await fsp.readFile(doingItemPath, 'utf8');
+                const allItems = itemContent.trim().split('\n')
+                    .filter(line => line.trim())
+                    .map(line => JSON.parse(line));
+                items = allItems.filter(item => itemIdList.includes(item.item_id));
+            } catch (err) {
+                return [];
+            }
+            return items;
+        } catch (err) {
+            return [];
+        }
+    }
+    async findMyParent(itemId) {
+        try {
+            const content = await fsp.readFile(this.parentPath, 'utf8');
+            const entries = content.trim().split('\n')
+                .filter(line => line.trim())
+                .map(line => JSON.parse(line));
+
+            return entries.find(entry => entry.child_panels.includes(itemId)) || null;
+        } catch (err) {
+            return null;
+        }
+    }
+    async makeChild(panelParentId, panelChildId) {
+        //0. Khong xu ly chinh no
+        if (panelParentId === panelChildId) {
+            return;
+        }
+        //1. Load panel info
+        const panelParent = await this.getPanelEntry(panelParentId);
+        if (!panelParent || panelParent.child_actions.length === 0) {
+            console.log('makeChild: Khong tim thay Panel', panelParentId);
+            return;
+        }
+        const panelChild = await this.getPanelEntry(panelChildId);
+        if (!panelChild || panelChild.child_actions.length === 0) {
+            console.log('makeChild: Khong tim thay Panel', panelChildId);
+            return;
+        }
+        const panelParentInfoArray = await this.getActionInfo([panelParentId]);
+        const panelChildInfoArray = await this.getActionInfo([panelChildId]);
+        if (!panelChildInfoArray || panelChildInfoArray.length === 0 || !panelParentInfoArray || panelParentInfoArray.length === 0) {
+            console.log('makeChild: Khong tim thay Item ', panelParentId, panelChildId);
+            return;
+        }
+        const panelParentInfo = panelParentInfoArray[0];
+        const panelChildInfo = panelChildInfoArray[0];
+        const parentBox = panelParentInfo.metadata?.global_pos;
+        const childBox = panelChildInfo.metadata?.global_pos;
+        const overlap = calcOverlapBox(parentBox, childBox);
+        if (overlap === 0) {
+            // Case A: Khong can loc Action, chi can set parent - child
+            const myParent = await this.findMyParent(panelParentId);
+            if (!myParent.child_panels.includes(panelChildId)) {
+                myParent.child_panels.push(panelChildId);
+                //update
+                await this.updatePanelEntry(myParent.parent_panel, myParent);
+            }
+            return;
+        } else if (overlap === 1) {
+            // Case D: trung len nhau thi 2 thang deu la con cua MyParent
+            const myParent = await this.findMyParent(panelParentId);
+            if (!myParent.child_panels.includes(panelChildId)) {
+                myParent.child_panels.push(panelChildId);
+                //update
+                await this.updatePanelEntry(myParent.parent_panel, myParent);
+            }
+            return;
+        } else {
+            // Case BCE: co giao nhau
+            if (isBoxInside(parentBox, childBox) === "A_in_B") {
+                // Case C: doi cho Parent va Child
+                const myParent = await this.findMyParent(panelParentId);
+                if (!myParent.child_panels.includes(panelChildId)) {
+                    myParent.child_panels.push(panelChildId);
+                    //update
+                    await this.updatePanelEntry(myParent.parent_panel, myParent);
+                }
+                if (!panelChild.child_panels.includes(panelParentId)) {
+                    panelChild.child_panels.push(panelParentId);
+                    //update
+                    await this.updatePanelEntry(panelChildId, panelChild);
+                }
+                await this.makeChild(panelChildId,panelParentId);
+                return;
+            }
+        }
+
+        const parentActionInfo = await this.getActionInfo(panelParent.child_actions);
+        if (!parentActionInfo) {
+            return;
+        }
+        const childActionInfo = await this.getActionInfo(panelChild.child_actions);
+        if (!childActionInfo) {
+            return;
+        }
+        //2. Xóa các action của parent nằm trong child >90%
+        const beforeCount = parentActionInfo.length;
+        const filteredParentActions = parentActionInfo.filter(parentAct => {
+            const pBox = parentAct.metadata?.global_pos;
+            // Kiểm tra nếu NO child action overlap > 90%, thì giữ lại.
+            const hasLargeOverlap = childActionInfo.some(childAct => {
+                const cBox = childAct.metadata?.global_pos;
+                const overlap = calcOverlapBox(pBox, cBox);
+                return overlap > 0.9;
+            });
+
+            return !hasLargeOverlap;
+        });
+        const afterCount = filteredParentActions.length;
+        const removedCount = beforeCount - afterCount;
+        panelParent.child_actions = filteredParentActions.map(item => item.item_id);
+        console.log(`🗑️ Removed ${removedCount} duplicate actions from parent panel (${beforeCount} → ${afterCount})`);
+        // 3. Add panelChildId to child_panels nếu chưa có
+        if (!panelParent.child_panels.includes(panelChildId)) {
+            panelParent.child_panels.push(panelChildId);
+        }
+        // 4. Ghi lại parent vào file
+        await this.updatePanelEntry(panelParentId, panelParent);
+        // 5. De quy voi cac panel con
+        const childPanels = panelParent.child_panels;
+        for (const cP of childPanels) {
+            await this.makeChild(cP, panelChildId);
         }
     }
 }

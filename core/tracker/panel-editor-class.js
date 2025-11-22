@@ -4,14 +4,27 @@ window.PanelEditor = class PanelEditor {
     constructor(imageBase64, geminiResultOrActionId, mode = 'full', panelId = null) {
         this.imageBase64 = imageBase64;
         
-        if (mode === 'cropOnly' || mode === 'confirmOnly') {
+        if (mode === 'cropOnly' || mode === 'confirmOnly' || mode === 'twoPointCrop') {
             this.actionItemId = geminiResultOrActionId;
             this.geminiResult = [];
             this.originalGeminiResult = [];
+            
+            if (mode === 'twoPointCrop') {
+                this.pagesData = panelId;
+                this.currentPageIndex = 0;
+                this.cropPoints = [];
+                this.cropMarkers = [];
+                this.fullScreenshotBase64 = null;
+                this.currentPageBase64 = null;
+            }
         } else {
             this.geminiResult = geminiResultOrActionId;
             this.originalGeminiResult = JSON.parse(JSON.stringify(geminiResultOrActionId));
             this.eventId = panelId;
+            this.currentPageIndex = 0;
+            this.fullPanelBase64 = null;
+            this.currentPageBase64 = null;
+            this.numPages = 1;
         }
         this.mode = mode;
         this.canvas = null;
@@ -36,11 +49,16 @@ window.PanelEditor = class PanelEditor {
     }
 
     async init() {
-        console.log('Enter Edit actions:');
-        console.log(\`  Total panels: \${this.geminiResult.length}\`);
-        this.geminiResult.forEach((panel, i) => {
-            console.log(\`  Panel[\${i}]: "\${panel.panel_title}" with \${panel.actions?.length || 0} actions\`);
-        });
+        if (this.mode === 'twoPointCrop') {
+            console.log('Enter Two-Point Crop Mode:');
+            console.log(\`  Total pages: \${this.pagesData ? this.pagesData.length : 0}\`);
+        } else {
+            console.log('Enter Edit actions:');
+            console.log(\`  Total panels: \${this.geminiResult.length}\`);
+            this.geminiResult.forEach((panel, i) => {
+                console.log(\`  Panel[\${i}]: "\${panel.panel_title}" with \${panel.actions?.length || 0} actions\`);
+            });
+        }
         
         if (window.resizeQueueBrowser) {
             await window.resizeQueueBrowser(true);
@@ -52,7 +70,24 @@ window.PanelEditor = class PanelEditor {
         
         document.body.style.zoom = '80%';
         
-        this.saveState();
+        let imageToLoad = this.imageBase64;
+        
+        if (this.mode === 'full') {
+            this.fullPanelBase64 = this.imageBase64;
+            const tempImg = new Image();
+            tempImg.src = 'data:image/png;base64,' + this.imageBase64;
+            await new Promise((resolve, reject) => {
+                tempImg.onload = resolve;
+                tempImg.onerror = reject;
+            });
+            const pageHeight = 1080;
+            this.numPages = Math.ceil(tempImg.naturalHeight / pageHeight);
+            console.log(\`📄 Panel height: \${tempImg.naturalHeight}px → \${this.numPages} pages\`);
+        }
+        
+        if (this.mode !== 'twoPointCrop' && this.mode !== 'confirmOnly') {
+            this.saveState();
+        }
         
         this.container = document.createElement('div');
         this.container.id = 'editor-container';
@@ -62,13 +97,24 @@ window.PanelEditor = class PanelEditor {
         if (this.mode === 'confirmOnly') {
             toolbarHTML += '<button id="editorSaveBtn" class="editor-btn save-btn">✅ Save Panel</button>';
             toolbarHTML += '<button id="editorCancelBtn" class="editor-btn cancel-btn">❌ Cancel</button>';
+        } else if (this.mode === 'twoPointCrop') {
+            toolbarHTML += \`<div id="pageIndicator" style="margin-bottom: 10px; font-weight: bold; font-size: 16px; color: #00ffff; text-align: center; text-shadow: 0 0 10px rgba(0,255,255,0.5);">Page 1/\${this.pagesData ? this.pagesData.length : 1}</div>\`;
+            toolbarHTML += '<button id="editorPrevPageBtn" class="editor-btn">◀ Prev</button>';
+            toolbarHTML += '<button id="editorNextPageBtn" class="editor-btn">Next ▶</button>';
+            toolbarHTML += '<button id="editorDontCropBtn" class="editor-btn" style="background: #f44336; color: white; font-weight: bold;">📐 Don&apos;t Crop (Use Full)</button>';
+            toolbarHTML += '<button id="editorSaveCropBtn" class="editor-btn save-btn" style="display:none; background: #4CAF50; color: white; font-weight: bold;">✅ Save Crop</button>';
+            toolbarHTML += '<button id="editorCancelBtn" class="editor-btn cancel-btn">❌ Cancel</button>';
         } else if (this.mode === 'cropOnly') {
             toolbarHTML += '<button id="editorCropBtn" class="editor-btn crop-btn">✂️ Crop (OFF)</button>';
             toolbarHTML += '<button id="editorCancelBtn" class="editor-btn cancel-btn">❌ Cancel</button>';
         } else {
             toolbarHTML += 
+                \`<div id="pageIndicator" style="margin-bottom: 10px; font-weight: bold; font-size: 16px; color: #00ffff; text-align: center; text-shadow: 0 0 10px rgba(0,255,255,0.5);">Page 1/\${this.numPages || 1}</div>\` +
+                '<button id="editorPrevPageBtn" class="editor-btn">◀ Prev</button>' +
+                '<button id="editorNextPageBtn" class="editor-btn">Next ▶</button>' +
                 '<button id="editorCropBtn" class="editor-btn crop-btn">✂️ Crop (OFF)</button>' +
                 '<button id="editorAddActionBtn" class="editor-btn add-btn">➕ Add Action</button>' +
+                '<button id="editorRenameByAIBtn" class="editor-btn ai-btn" disabled>🤖 Rename by AI</button>' +
                 '<button id="editorSaveBtn" class="editor-btn save-btn">💾 Save Changes</button>' +
                 '<button id="editorResetBtn" class="editor-btn reset-btn">↺ Reset</button>' +
                 '<button id="editorCancelBtn" class="editor-btn cancel-btn">❌ Cancel</button>' +
@@ -87,8 +133,17 @@ window.PanelEditor = class PanelEditor {
         this.container.innerHTML = toolbarHTML;
         document.body.appendChild(this.container);
         
+        if (this.mode === 'twoPointCrop') {
+            this.fullScreenshotBase64 = this.imageBase64;
+            imageToLoad = await this.cropPageFromFull(0);
+            this.currentPageBase64 = imageToLoad;
+        } else if (this.mode === 'full') {
+            imageToLoad = await this.cropPageFromPanel(0);
+            this.currentPageBase64 = imageToLoad;
+        }
+        
         const img = new Image();
-        img.src = 'data:image/png;base64,' + this.imageBase64;
+        img.src = 'data:image/png;base64,' + imageToLoad;
         await new Promise((resolve, reject) => {
             img.onload = resolve;
             img.onerror = reject;
@@ -110,14 +165,41 @@ window.PanelEditor = class PanelEditor {
             });
         });
         
-        if (this.mode !== 'cropOnly') {
+        if (this.mode !== 'cropOnly' && this.mode !== 'twoPointCrop') {
             this.drawDefaultPanelBorder();
             this.drawAllBoxes();
             this.fixOutOfBoundsBoxes();
+            this.canvas.selection = true;
+        }
+        
+        if (this.mode === 'twoPointCrop') {
+            this.enableTwoPointCropMode();
         }
         
         this.setupEventHandlers();
+        this.autoZoomToFit();
         this.positionUIElements();
+    }
+    
+    autoZoomToFit() {
+        const windowHeight = window.innerHeight;
+        const windowWidth = window.innerWidth;
+        const canvasHeight = this.canvas.getHeight();
+        const canvasWidth = this.canvas.getWidth();
+        
+        const toolbarHeight = 150;
+        const availableHeight = windowHeight - toolbarHeight - 40;
+        const availableWidth = windowWidth - 40;
+        
+        const scaleHeight = availableHeight / canvasHeight;
+        const scaleWidth = availableWidth / canvasWidth;
+        const scale = Math.min(scaleHeight, scaleWidth, 1);
+        
+        if (scale < 1) {
+            const zoomPercent = Math.floor(scale * 100);
+            document.body.style.zoom = \`\${zoomPercent}%\`;
+            console.log(\`Auto-zoom set to \${zoomPercent}% to fit canvas (\${canvasWidth}x\${canvasHeight}) in viewport (\${windowWidth}x\${windowHeight})\`);
+        }
     }
     
     positionUIElements() {
@@ -268,16 +350,24 @@ window.PanelEditor = class PanelEditor {
         const panel = this.geminiResult[0];
         if (!panel || !Array.isArray(panel.actions)) return;
         
+        const currentPage = this.currentPageIndex + 1;
+        
         panel.actions.forEach((action, actionIndex) => {
             if (action.action_pos) {
-                this.drawBox(
-                    action.action_pos,
-                    '0-' + actionIndex,
-                    'action',
-                    action.action_name
-                );
+                const actionPage = action.action_pos.p || 1;
+                
+                if (actionPage === currentPage) {
+                    this.drawBox(
+                        action.action_pos,
+                        '0-' + actionIndex,
+                        'action',
+                        action.action_name
+                    );
+                }
             }
         });
+        
+        console.log(\`🎨 Drew boxes for \${panel.actions.filter(a => (a.action_pos?.p || 1) === currentPage).length} actions on page \${currentPage}\`);
     }
 
     drawBox(pos, id, type, title) {
@@ -409,9 +499,15 @@ window.PanelEditor = class PanelEditor {
         
         this.canvas.on('selection:created', () => {
             this.showStatus('Selected • Drag to move • Use handles to resize', 'info');
+            this.updateRenameByAIButton();
         });
         
         this.canvas.on('selection:cleared', () => {
+            this.updateRenameByAIButton();
+        });
+        
+        this.canvas.on('selection:updated', () => {
+            this.updateRenameByAIButton();
         });
         
         this.canvas.on('mouse:down', (e) => {
@@ -485,8 +581,12 @@ window.PanelEditor = class PanelEditor {
         });
 
         this.canvas.on('mouse:up', () => {
-            if (this._globalMouseUpHandler) return;
+            if (this._globalMouseUpHandler) {
+                return;
+            }
+            
             if (!this.dragLinkedRect) return;
+            
             if (this.isDraggingLabel && this.dragLinkedRect) {
                 this.updateGeminiResult(this.dragLinkedRect);
                 this.saveState();
@@ -533,13 +633,22 @@ window.PanelEditor = class PanelEditor {
                 }
                 await this.saveFullScreenshotPanel();
             };
-            document.getElementById('editorCancelBtn').onclick = () => this.cancel();
+            document.getElementById('editorCancelBtn').onclick = async () => await this.cancel();
+        } else if (this.mode === 'twoPointCrop') {
+            document.getElementById('editorPrevPageBtn').onclick = () => this.switchPage('prev');
+            document.getElementById('editorNextPageBtn').onclick = () => this.switchPage('next');
+            document.getElementById('editorDontCropBtn').onclick = async () => await this.dontCropFullPage();
+            document.getElementById('editorSaveCropBtn').onclick = async () => await this.saveTwoPointCrop();
+            document.getElementById('editorCancelBtn').onclick = async () => await this.cancel();
         } else if (this.mode === 'cropOnly') {
             document.getElementById('editorCropBtn').onclick = () => this.toggleCropMode();
-            document.getElementById('editorCancelBtn').onclick = () => this.cancel();
+            document.getElementById('editorCancelBtn').onclick = async () => await this.cancel();
         } else {
+            document.getElementById('editorPrevPageBtn').onclick = () => this.switchEditPage('prev');
+            document.getElementById('editorNextPageBtn').onclick = () => this.switchEditPage('next');
             document.getElementById('editorCropBtn').onclick = () => this.toggleCropMode();
             document.getElementById('editorAddActionBtn').onclick = () => this.toggleActionDrawingMode();
+            document.getElementById('editorRenameByAIBtn').onclick = async () => await this.renameSelectedActionByAI();
             
             document.getElementById('editorSaveBtn').onclick = async () => {
                 if (this.isProcessing) {
@@ -549,7 +658,7 @@ window.PanelEditor = class PanelEditor {
                 await this.save();
             };
             
-            document.getElementById('editorCancelBtn').onclick = () => this.cancel();
+            document.getElementById('editorCancelBtn').onclick = async () => await this.cancel();
             document.getElementById('editorResetBtn').onclick = () => this.reset();
         }
         
@@ -723,10 +832,91 @@ window.PanelEditor = class PanelEditor {
             this.isProcessing = false;
         }
     }
+    
+    updateRenameByAIButton() {
+        if (this.mode !== 'full') return;
+        
+        const renameBtn = document.getElementById('editorRenameByAIBtn');
+        if (!renameBtn) return;
+        
+        const activeObject = this.canvas.getActiveObject();
+        
+        if (activeObject && activeObject.boxType === 'rect' && !this.canvas.getActiveObjects || this.canvas.getActiveObjects().length === 1) {
+            renameBtn.disabled = false;
+        } else {
+            renameBtn.disabled = true;
+        }
+    }
+    
+    async renameSelectedActionByAI() {
+        if (this.isRenamingByAI) {
+            this.showStatus('⚠️ AI rename đang chạy, vui lòng đợi...', 'warning');
+            return;
+        }
+        
+        const activeObject = this.canvas.getActiveObject();
+        if (!activeObject || activeObject.boxType !== 'rect') {
+            this.showStatus('\u26a0\ufe0f Please select an action first', 'warning');
+            return;
+        }
+        
+        const [panelIdx, actionIdx] = activeObject.id.split('-').map(Number);
+        const action = this.geminiResult[panelIdx]?.actions[actionIdx];
+        
+        if (!action || !action.action_id) {
+            this.showStatus('\u274c Invalid action selected', 'error');
+            return;
+        }
+        
+        this.isRenamingByAI = true;
+        this.showStatus('\ud83e\udd16 Renaming with AI...', 'loading');
+        
+        const currentPos = {
+            x: Math.round(activeObject.left),
+            y: Math.round(activeObject.top),
+            w: Math.round(activeObject.width * activeObject.scaleX),
+            h: Math.round(activeObject.height * activeObject.scaleY)
+        };
+        
+        try {
+            if (window.renameActionByAI) {
+                await window.renameActionByAI(action.action_id, currentPos);
+                
+                if (window.getActionItem) {
+                    const updatedAction = await window.getActionItem(action.action_id);
+                    if (updatedAction) {
+                        this.geminiResult[panelIdx].actions[actionIdx].action_name = updatedAction.name;
+                        this.geminiResult[panelIdx].actions[actionIdx].action_type = updatedAction.type;
+                        this.geminiResult[panelIdx].actions[actionIdx].action_verb = updatedAction.verb;
+                        this.geminiResult[panelIdx].actions[actionIdx].action_content = updatedAction.content;
+                        
+                        const boxData = this.fabricObjects.get(activeObject.id);
+                        if (boxData && boxData.label) {
+                            boxData.label.set({ text: updatedAction.name });
+                        }
+                        this.canvas.renderAll();
+                        console.log(\`\u2705 AI renamed action to: "\${updatedAction.name}"\`);
+                        this.showStatus(\`\u2705 Renamed to: "\${updatedAction.name}"\`, 'success');
+                    }
+                }
+            } else {
+                this.showStatus('\u274c Rename function not available', 'error');
+            }
+        } catch (err) {
+            console.error('Rename by AI failed:', err);
+            this.showStatus('\u274c AI rename failed', 'error');
+        } finally {
+            this.isRenamingByAI = false;
+        }
+    }
 
-    cancel() {
-        if (confirm('Discard all changes?')) {
-            this.destroy();
+    async cancel() {
+        if (this.mode === 'twoPointCrop' || this.mode === 'confirmOnly' || this.mode === 'cropOnly') {
+            await this.destroy();
+        } else {
+            if (confirm('Discard all changes?')) {
+                await this.destroy();
+            }
         }
     }
 
@@ -832,11 +1022,13 @@ window.PanelEditor = class PanelEditor {
             
             const actionContent = prompt('Action Content (optional):');
             
+            const normalizeWhitespace = (text) => text ? text.trim().replace(/\s+/g, ' ') : '';
+            
             const actionData = {
-                name: actionName.trim(),
-                type: actionType.trim().toLowerCase(),
-                verb: actionVerb.trim().toLowerCase(),
-                content: actionContent && actionContent.trim() ? actionContent.trim() : null
+                name: normalizeWhitespace(actionName) || 'Unnamed',
+                type: normalizeWhitespace(actionType).toLowerCase() || 'button',
+                verb: normalizeWhitespace(actionVerb).toLowerCase() || 'click',
+                content: normalizeWhitespace(actionContent) || null
             };
             
             this.addNewAction(this.drawingRect, actionData, this.selectedPanelIndex);
@@ -965,8 +1157,8 @@ window.PanelEditor = class PanelEditor {
             isDrawing = false;
             
             const cropArea = {
-                x: Math.round(cropRect.left),
-                y: Math.round(cropRect.top),
+                x: Math.max(0, Math.round(cropRect.left)),
+                y: Math.max(0, Math.round(cropRect.top)),
                 width: Math.round(cropRect.width),
                 height: Math.round(cropRect.height)
             };
@@ -1098,7 +1290,8 @@ window.PanelEditor = class PanelEditor {
         const finishEditing = () => {
             this.isEditingLabel = false;
             
-            const newText = itext.text.trim() || 'Unnamed';
+            const normalizedText = itext.text.trim().replace(/\s+/g, ' ');
+            const newText = normalizedText || 'Unnamed';
             const oldText = label.text;
             
             this.saveState();
@@ -1379,10 +1572,420 @@ window.PanelEditor = class PanelEditor {
         });
     }
 
+    enableTwoPointCropMode() {
+        console.log('✅ Two-Point Crop Mode enabled, cropPoints:', this.cropPoints);
+        
+        if (!this.cropPoints) {
+            this.cropPoints = [];
+        }
+        
+        if (this.cropMarkers && this.cropMarkers.length > 0) {
+            this.cropMarkers.forEach(m => this.canvas.remove(m));
+        }
+        this.cropMarkers = [];
+        
+        this.cropPoints.forEach((point, index) => {
+            if (point.pageIndex === this.currentPageIndex) {
+                const marker = new fabric.Circle({
+                    left: point.x - 8,
+                    top: point.y - 8,
+                    radius: 8,
+                    fill: index === 0 ? 'lime' : 'red',
+                    stroke: '#000',
+                    strokeWidth: 2,
+                    selectable: false,
+                    evented: false
+                });
+                this.canvas.add(marker);
+                this.cropMarkers.push(marker);
+            }
+        });
+        this.canvas.renderAll();
+        
+        this.canvas.selection = false;
+        
+        const statusMsg = this.cropPoints.length === 1 
+            ? \`📍 Point 1 set on Page \${this.cropPoints[0].pageIndex + 1}. Click BottomRight corner.\`
+            : '📍 Click TopLeft corner (or switch page first)';
+        this.showStatus(statusMsg, 'info');
+        
+        if (this._twoPointHandler) {
+            this.canvas.off('mouse:down', this._twoPointHandler);
+        }
+        
+        if (this._twoPointUndoHandler) {
+            document.removeEventListener('keydown', this._twoPointUndoHandler);
+        }
+        
+        this._twoPointUndoHandler = (e) => {
+            if ((e.ctrlKey || e.metaKey) && e.key === 'z' && this.cropPoints.length > 0) {
+                e.preventDefault();
+                console.log('↶ Undo crop point');
+                
+                this.cropPoints.pop();
+                
+                const saveBtn = document.getElementById('editorSaveCropBtn');
+                if (saveBtn) {
+                    saveBtn.style.display = 'none';
+                }
+                this.calculatedCropArea = null;
+                
+                if (this.cropPoints.length === 0) {
+                    this.showStatus('↶ Undo: Point removed. Click TopLeft corner', 'info');
+                } else {
+                    this.showStatus(\`↶ Undo: Point 2 removed. Point 1 at Page \${this.cropPoints[0].pageIndex + 1}\`, 'info');
+                }
+                
+                this.enableTwoPointCropMode();
+            }
+        };
+        
+        document.addEventListener('keydown', this._twoPointUndoHandler);
+        
+        const clickHandler = (e) => {
+            const pointer = this.canvas.getPointer(e.e);
+            const x = Math.round(pointer.x);
+            const y = Math.round(pointer.y);
+            
+            console.log('Click detected! Current cropPoints:', this.cropPoints, 'Current page:', this.currentPageIndex);
+            
+            if (this.cropPoints.length === 0) {
+                console.log('Adding Point 1 at:', {x, y, pageIndex: this.currentPageIndex});
+                this.cropPoints.push({ x, y, pageIndex: this.currentPageIndex });
+                
+                const marker = new fabric.Circle({
+                    left: x - 8,
+                    top: y - 8,
+                    radius: 8,
+                    fill: 'lime',
+                    stroke: '#000',
+                    strokeWidth: 2,
+                    selectable: false,
+                    evented: false
+                });
+                this.canvas.add(marker);
+                this.cropMarkers.push(marker);
+                
+                this.showStatus('📍 Point 1 set. Click BottomRight corner (or switch page)', 'success');
+                
+            } else if (this.cropPoints.length === 1) {
+                console.log('Adding Point 2 at:', {x, y, pageIndex: this.currentPageIndex});
+                console.log('Point 1 was at:', this.cropPoints[0]);
+                this.cropPoints.push({ x, y, pageIndex: this.currentPageIndex });
+                
+                const marker = new fabric.Circle({
+                    left: x - 8,
+                    top: y - 8,
+                    radius: 8,
+                    fill: 'red',
+                    stroke: '#000',
+                    strokeWidth: 2,
+                    selectable: false,
+                    evented: false
+                });
+                this.canvas.add(marker);
+                this.cropMarkers.push(marker);
+                
+                this.canvas.off('mouse:down', clickHandler);
+                this.confirmTwoPointCrop();
+            }
+        };
+        
+        this.canvas.on('mouse:down', clickHandler);
+        this._twoPointHandler = clickHandler;
+    }
+    
+    async confirmTwoPointCrop() {
+        const point1 = this.cropPoints[0];
+        const point2 = this.cropPoints[1];
+        
+        console.log('=== CONFIRM CROP ===');
+        console.log('Point 1:', point1);
+        console.log('Point 2:', point2);
+        console.log('Pages data:', this.pagesData);
+        
+        const page1Y = this.pagesData[point1.pageIndex].y_start;
+        const page2Y = this.pagesData[point2.pageIndex].y_start;
+        
+        console.log('Page 1 Y start:', page1Y);
+        console.log('Page 2 Y start:', page2Y);
+        
+        const absolutePoint1 = { x: point1.x, y: page1Y + point1.y };
+        const absolutePoint2 = { x: point2.x, y: page2Y + point2.y };
+        
+        console.log('Absolute Point 1:', absolutePoint1);
+        console.log('Absolute Point 2:', absolutePoint2);
+        
+        const cropArea = {
+            x: Math.min(absolutePoint1.x, absolutePoint2.x),
+            y: Math.min(absolutePoint1.y, absolutePoint2.y),
+            w: Math.abs(absolutePoint2.x - absolutePoint1.x),
+            h: Math.abs(absolutePoint2.y - absolutePoint1.y)
+        };
+        
+        console.log('Final crop area:', cropArea);
+        
+        if (cropArea.w < 50 || cropArea.h < 50) {
+            alert('⚠️ Crop area quá nhỏ (min 50x50px). Vui lòng vẽ lại.');
+            this.cropPoints = [];
+            this.cropMarkers.forEach(m => this.canvas.remove(m));
+            this.cropMarkers = [];
+            this.enableTwoPointCropMode();
+            return;
+        }
+        
+        this.calculatedCropArea = cropArea;
+        
+        const saveBtn = document.getElementById('editorSaveCropBtn');
+        if (saveBtn) {
+            saveBtn.style.display = 'inline-block';
+        }
+        
+        this.showStatus(\`✅ Crop area ready: \${cropArea.w}x\${cropArea.h}px. Click Save to confirm.\`, 'success');
+    }
+    
+    async saveTwoPointCrop() {
+        if (!this.calculatedCropArea) {
+            alert('⚠️ No crop area calculated');
+            return;
+        }
+        
+        const saveBtn = document.getElementById('editorSaveCropBtn');
+        if (saveBtn) {
+            saveBtn.innerHTML = '⏳ Saving... <span style="display:inline-block;width:12px;height:12px;border:2px solid white;border-top-color:transparent;border-radius:50%;animation:spin 0.6s linear infinite;margin-left:5px;"></span>';
+            saveBtn.disabled = true;
+        }
+        
+        this.showStatus('✅ Saving cropped panel...', 'success');
+        
+        if (window.confirmPanelCrop) {
+            await window.confirmPanelCrop(this.calculatedCropArea);
+        }
+        
+        await this.cancel();
+    }
+    
+    async dontCropFullPage() {
+        const dontCropBtn = document.getElementById('editorDontCropBtn');
+        if (dontCropBtn) {
+            dontCropBtn.innerHTML = '⏳ Processing... <span style="display:inline-block;width:12px;height:12px;border:2px solid white;border-top-color:transparent;border-radius:50%;animation:spin 0.6s linear infinite;margin-left:5px;"></span>';
+            dontCropBtn.disabled = true;
+        }
+        
+        const tempImg = new Image();
+        tempImg.src = 'data:image/png;base64,' + this.imageBase64;
+        await new Promise((resolve, reject) => {
+            tempImg.onload = resolve;
+            tempImg.onerror = reject;
+        });
+        
+        const fullWidth = tempImg.naturalWidth;
+        const fullHeight = tempImg.naturalHeight;
+        
+        this.calculatedCropArea = {
+            x: 0,
+            y: 0,
+            w: fullWidth,
+            h: fullHeight
+        };
+        
+        this.showStatus(\`📐 Using full screenshot: \${fullWidth}x\${fullHeight}px. Saving...\`, 'info');
+        
+        await this.saveTwoPointCrop();
+    }
+    
+    async cropPageFromFull(pageIndex) {
+        if (!this.pagesData || !this.fullScreenshotBase64) return this.fullScreenshotBase64;
+        
+        const page = this.pagesData[pageIndex];
+        if (!page) return this.fullScreenshotBase64;
+        
+        return new Promise((resolve, reject) => {
+            const img = new Image();
+            img.onload = () => {
+                const canvas = document.createElement('canvas');
+                canvas.width = 1920;
+                canvas.height = page.height;
+                const ctx = canvas.getContext('2d');
+                
+                ctx.drawImage(
+                    img,
+                    0, page.y_start,
+                    1920, page.height,
+                    0, 0,
+                    1920, page.height
+                );
+                
+                const croppedBase64 = canvas.toDataURL('image/png').split(',')[1];
+                resolve(croppedBase64);
+            };
+            img.onerror = reject;
+            img.src = 'data:image/png;base64,' + this.fullScreenshotBase64;
+        });
+    }
+    
+    async cropPageFromPanel(pageIndex) {
+        if (!this.fullPanelBase64) return this.fullPanelBase64;
+        
+        const pageHeight = 1080;
+        const yStart = pageIndex * pageHeight;
+        
+        return new Promise((resolve, reject) => {
+            const img = new Image();
+            img.onload = () => {
+                const canvas = document.createElement('canvas');
+                canvas.width = img.width;
+                canvas.height = Math.min(pageHeight, img.height - yStart);
+                const ctx = canvas.getContext('2d');
+                
+                ctx.drawImage(
+                    img,
+                    0, yStart,
+                    img.width, canvas.height,
+                    0, 0,
+                    img.width, canvas.height
+                );
+                
+                const croppedBase64 = canvas.toDataURL('image/png').split(',')[1];
+                resolve(croppedBase64);
+            };
+            img.onerror = reject;
+            img.src = 'data:image/png;base64,' + this.fullPanelBase64;
+        });
+    }
+    
+    async switchEditPage(direction) {
+        if (this.numPages <= 1) return;
+        
+        if (direction === 'next' && this.currentPageIndex < this.numPages - 1) {
+            this.currentPageIndex++;
+        } else if (direction === 'prev' && this.currentPageIndex > 0) {
+            this.currentPageIndex--;
+        } else {
+            return;
+        }
+        
+        this.showStatus('⏳ Loading page...', 'info');
+        
+        const pageBase64 = await this.cropPageFromPanel(this.currentPageIndex);
+        this.currentPageBase64 = pageBase64;
+        
+        const img = new Image();
+        img.src = 'data:image/png;base64,' + pageBase64;
+        await new Promise((resolve, reject) => {
+            img.onload = resolve;
+            img.onerror = reject;
+        });
+        
+        this.canvas.setWidth(img.naturalWidth);
+        this.canvas.setHeight(img.naturalHeight);
+        
+        await new Promise((resolve) => {
+            fabric.Image.fromURL(img.src, (fabricImg) => {
+                this.canvas.setBackgroundImage(fabricImg, () => {
+                    this.canvas.renderAll();
+                    resolve();
+                });
+            });
+        });
+        
+        const indicator = document.getElementById('pageIndicator');
+        if (indicator) {
+            indicator.textContent = \`Page \${this.currentPageIndex + 1}/\${this.numPages}\`;
+        }
+        
+        this.fabricObjects.forEach((boxData) => {
+            if (boxData.rect) this.canvas.remove(boxData.rect);
+            if (boxData.label) this.canvas.remove(boxData.label);
+        });
+        this.fabricObjects.clear();
+        
+        this.drawDefaultPanelBorder();
+        this.drawAllBoxes();
+        this.canvas.selection = true;
+        this.canvas.renderAll();
+        
+        this.showStatus(\`📄 Page \${this.currentPageIndex + 1}/\${this.numPages}\`, 'success');
+    }
+    
+    async switchPage(direction) {
+        if (!this.pagesData || this.pagesData.length === 0) return;
+        
+        const oldIndex = this.currentPageIndex;
+        
+        if (direction === 'next' && this.currentPageIndex < this.pagesData.length - 1) {
+            this.currentPageIndex++;
+        } else if (direction === 'prev' && this.currentPageIndex > 0) {
+            this.currentPageIndex--;
+        } else {
+            return;
+        }
+        
+        if (this.cropMarkers && this.cropMarkers.length > 0) {
+            this.cropMarkers.forEach(m => this.canvas.remove(m));
+            this.cropMarkers = [];
+        }
+        
+        const saveBtn = document.getElementById('editorSaveCropBtn');
+        if (saveBtn) {
+            saveBtn.style.display = 'none';
+        }
+        this.calculatedCropArea = null;
+        
+        this.showStatus('⏳ Loading page...', 'info');
+        
+        const pageBase64 = await this.cropPageFromFull(this.currentPageIndex);
+        this.currentPageBase64 = pageBase64;
+        
+        const img = new Image();
+        img.src = 'data:image/png;base64,' + pageBase64;
+        await new Promise((resolve, reject) => {
+            img.onload = resolve;
+            img.onerror = reject;
+        });
+        
+        this.canvas.setWidth(img.naturalWidth);
+        this.canvas.setHeight(img.naturalHeight);
+        
+        await new Promise((resolve) => {
+            fabric.Image.fromURL(img.src, (fabricImg) => {
+                this.canvas.setBackgroundImage(fabricImg, () => {
+                    this.canvas.renderAll();
+                    resolve();
+                });
+            });
+        });
+        
+        const indicator = document.getElementById('pageIndicator');
+        if (indicator) {
+            indicator.textContent = \`Page \${this.currentPageIndex + 1}/\${this.pagesData.length}\`;
+        }
+        
+        console.log('Before enableTwoPointCropMode - cropPoints:', this.cropPoints);
+        this.enableTwoPointCropMode();
+        console.log('After enableTwoPointCropMode - cropPoints:', this.cropPoints);
+        
+        if (this.cropPoints.length === 1) {
+            this.showStatus(\`📄 Page \${this.currentPageIndex + 1}/\${this.pagesData.length} | 📍 Point 1 set on Page \${this.cropPoints[0].pageIndex + 1}. Click BottomRight corner.\`, 'success');
+        } else {
+            this.showStatus(\`📄 Page \${this.currentPageIndex + 1}/\${this.pagesData.length}\`, 'success');
+        }
+    }
+
     async destroy() {
         if (this._keydownHandler) {
             document.removeEventListener('keydown', this._keydownHandler);
             this._keydownHandler = null;
+        }
+        
+        if (this._twoPointHandler) {
+            this.canvas.off('mouse:down', this._twoPointHandler);
+            this._twoPointHandler = null;
+        }
+        
+        if (this._twoPointUndoHandler) {
+            document.removeEventListener('keydown', this._twoPointUndoHandler);
+            this._twoPointUndoHandler = null;
         }
         
         if (this.canvas) {
@@ -1407,6 +2010,10 @@ window.PanelEditor = class PanelEditor {
         }
     }
 };
+
+const spinnerStyle = document.createElement('style');
+spinnerStyle.textContent = '@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }';
+document.head.appendChild(spinnerStyle);
     `;
 }
 

@@ -33,7 +33,7 @@ export async function setupNavigationListener(tracker) {
                 try {
                     cleanupPollers();
                     await sleep(500);
-                await setupTracking(tracker);
+                    await setupTracking(tracker);
                     console.log(`🔄 Page navigated to: ${newUrl}`);
                 } catch (e) {
                     console.error('❌ Failed to re-inject on navigation:', e);
@@ -83,11 +83,11 @@ export async function showReadyNotification(tracker) {
                 }
             `;
             if (document.head) {
-            document.head.appendChild(style);
+                document.head.appendChild(style);
             }
             if (document.body) {
-            document.body.appendChild(notif);
-            setTimeout(() => notif.remove(), 1000);
+                document.body.appendChild(notif);
+                setTimeout(() => notif.remove(), 1000);
             }
         });
     } catch (err) {
@@ -104,7 +104,7 @@ export async function setupTracking(tracker) {
         try {
             await tracker.page.exposeFunction(name, fn);
         } catch (err) {
-            if (!err.message.includes('already exists') && 
+            if (!err.message.includes('already exists') &&
                 !err.message.includes('Target closed') &&
                 !err.message.includes('Execution context was destroyed')) {
                 console.error(`Failed to expose ${name}:`, err);
@@ -115,7 +115,7 @@ export async function setupTracking(tracker) {
     await exposeIfNotExists("triggerCaptureGemini", async () => {
         await tracker._broadcast({ type: 'trigger_capture', mode: 'gemini' });
     });
-    
+
     const handlers = tracker._queueHandlers;
     if (handlers) {
         await exposeIfNotExists("triggerDrawPanelNew", handlers.triggerDrawPanelNew);
@@ -124,14 +124,14 @@ export async function setupTracking(tracker) {
 
     try {
         await tracker.page.evaluate(() => {
-        if (!window.showTrackingToast) {
-            window.showTrackingToast = (message) => {
-                const existingToast = document.getElementById('__tracking_toast');
-                if (existingToast) existingToast.remove();
-                const toast = document.createElement('div');
-                toast.id = '__tracking_toast';
-                toast.textContent = message;
-                toast.style.cssText = `
+            if (!window.showTrackingToast) {
+                window.showTrackingToast = (message) => {
+                    const existingToast = document.getElementById('__tracking_toast');
+                    if (existingToast) existingToast.remove();
+                    const toast = document.createElement('div');
+                    toast.id = '__tracking_toast';
+                    toast.textContent = message;
+                    toast.style.cssText = `
                     position: fixed;
                     top: 20px;
                     right: 20px;
@@ -145,27 +145,27 @@ export async function setupTracking(tracker) {
                     animation: slideIn 0.3s ease;
                     pointer-events: none;
                 `;
-                const style = document.createElement('style');
-                style.textContent = `
+                    const style = document.createElement('style');
+                    style.textContent = `
                     @keyframes slideIn {
                         from { transform: translateX(100%); opacity: 0; }
                         to { transform: translateX(0); opacity: 1; }
                     }
                 `;
-                if (document.head) document.head.appendChild(style);
-                const parentNode = document.body || document.documentElement;
-                if (parentNode) parentNode.appendChild(toast);
-                setTimeout(() => { if (toast.parentNode) toast.remove(); }, 3000);
-            };
-        }
+                    if (document.head) document.head.appendChild(style);
+                    const parentNode = document.body || document.documentElement;
+                    if (parentNode) parentNode.appendChild(toast);
+                    setTimeout(() => { if (toast.parentNode) toast.remove(); }, 3000);
+                };
+            }
             if (!window.__trackingWs || window.__trackingWs.readyState !== 1) {
                 window.__trackingWs = new WebSocket('ws://localhost:8081');
-            
-            window.__trackingWs.onopen = () => {
-                if (!document.getElementById('__ws_notif_style')) {
-            const style = document.createElement('style');
-                    style.id = '__ws_notif_style';
-            style.textContent = `
+
+                window.__trackingWs.onopen = () => {
+                    if (!document.getElementById('__ws_notif_style')) {
+                        const style = document.createElement('style');
+                        style.id = '__ws_notif_style';
+                        style.textContent = `
                 @keyframes slideInRight {
                     from { opacity: 0; transform: translateX(20px); }
                     to { opacity: 1; transform: translateX(0); }
@@ -174,11 +174,11 @@ export async function setupTracking(tracker) {
                     to { opacity: 0; transform: translateX(20px); }
                 }
             `;
-                document.head.appendChild(style);
-            }
-                
-                const wsNotif = document.createElement('div');
-                wsNotif.style.cssText = `
+                        document.head.appendChild(style);
+                    }
+
+                    const wsNotif = document.createElement('div');
+                    wsNotif.style.cssText = `
                     position: fixed;
                     bottom: 70px;
                     right: 20px;
@@ -193,52 +193,52 @@ export async function setupTracking(tracker) {
                     box-shadow: 0 4px 12px rgba(0,0,0,0.15);
                     animation: slideInRight 0.3s ease-out, fadeOut 0.5s ease-in 0.5s forwards;
                 `;
-                wsNotif.textContent = '🟢 WS Connected';
-                document.body.appendChild(wsNotif);
-                setTimeout(() => wsNotif.remove(), 1000);
-            };
-            
-            window.__trackingWs.onerror = (err) => {};
-            
-            window.__trackingWs.onclose = () => {};
-            
-            window.__trackingWs.onmessage = (msg) => {
-                try {
-                    const evt = JSON.parse(msg.data);
-                    
-                    if (evt.type === 'show_toast' && evt.message) {
-                        if (window.showTrackingToast) {
-                            window.showTrackingToast(evt.message);
-                        }
-                    } else if (evt.type === 'panel_selected') {
-                        if ('panel_id' in evt) {
-                            window.__selectedItemId = evt.panel_id;
-                            if (evt.panel_id == null) {
-                                window.__selectedItemCategory = null;
+                    wsNotif.textContent = '🟢 WS Connected';
+                    document.body.appendChild(wsNotif);
+                    setTimeout(() => wsNotif.remove(), 1000);
+                };
+
+                window.__trackingWs.onerror = (err) => { };
+
+                window.__trackingWs.onclose = () => { };
+
+                window.__trackingWs.onmessage = (msg) => {
+                    try {
+                        const evt = JSON.parse(msg.data);
+
+                        if (evt.type === 'show_toast' && evt.message) {
+                            if (window.showTrackingToast) {
+                                window.showTrackingToast(evt.message);
+                            }
+                        } else if (evt.type === 'panel_selected') {
+                            if ('panel_id' in evt) {
+                                window.__selectedItemId = evt.panel_id;
+                                if (evt.panel_id == null) {
+                                    window.__selectedItemCategory = null;
+                                }
+                            }
+                            if ('item_category' in evt) {
+                                window.__selectedItemCategory = evt.item_category;
                             }
                         }
-                        if ('item_category' in evt) {
-                            window.__selectedItemCategory = evt.item_category;
-                        }
-                    }
-                } catch (err) {}
-            };
-        }
-        
-        const mouseHighlightExists = document.getElementById('__mouse_highlight_cursor');
-        
-        if (window.__trackingSetup && mouseHighlightExists) {
-            return;
-        }
-        
-        const existingHighlight = document.getElementById('__mouse_highlight_cursor');
-        if (existingHighlight) {
-            existingHighlight.remove();
-        }
+                    } catch (err) { }
+                };
+            }
 
-        const mouseHighlight = document.createElement('div');
-        mouseHighlight.id = '__mouse_highlight_cursor';
-        mouseHighlight.style.cssText = `
+            const mouseHighlightExists = document.getElementById('__mouse_highlight_cursor');
+
+            if (window.__trackingSetup && mouseHighlightExists) {
+                return;
+            }
+
+            const existingHighlight = document.getElementById('__mouse_highlight_cursor');
+            if (existingHighlight) {
+                existingHighlight.remove();
+            }
+
+            const mouseHighlight = document.createElement('div');
+            mouseHighlight.id = '__mouse_highlight_cursor';
+            mouseHighlight.style.cssText = `
             position: fixed;
             width: 40px;
             height: 40px;
@@ -251,62 +251,62 @@ export async function setupTracking(tracker) {
             box-shadow: 0 0 10px rgba(255, 215, 0, 0.5);
             display: none;
         `;
-        
-        if (document.body) {
-            document.body.appendChild(mouseHighlight);
-            
-            document.addEventListener('mousemove', (e) => {
-                mouseHighlight.style.display = 'block';
-                mouseHighlight.style.left = e.clientX + 'px';
-                mouseHighlight.style.top = e.clientY + 'px';
-            }, { passive: true });
-            
-            document.addEventListener('mouseleave', () => {
-                mouseHighlight.style.display = 'none';
-            }, { passive: true });
-            
-            document.addEventListener('mouseenter', () => {
-                mouseHighlight.style.display = 'block';
-            }, { passive: true });
-        }
-        
-        window.getClickedElementInfo = (element) => {
-            if (!element) return null;
-            
-            const tag = element.tagName || 'unknown';
-            const text = (element.textContent || '').trim().substring(0, 100);
-            
-            const elementName =
-                element.getAttribute('aria-label')?.trim() ||
-                element.placeholder?.trim() ||
-                element.value?.trim() ||
-                element.alt?.trim() ||
-                text ||
-                element.id?.trim() ||
-                tag.toLowerCase();
-            
-            return {
-                tag,
-                id: element.id || '',
-                classes: element.className || '',
-                text: text,
-                type: element.type || '',
-                href: element.href || '',
-                name: element.name || '',
-                ariaLabel: element.getAttribute('aria-label') || '',
-                elementName: elementName
+
+            if (document.body) {
+                document.body.appendChild(mouseHighlight);
+
+                document.addEventListener('mousemove', (e) => {
+                    mouseHighlight.style.display = 'block';
+                    mouseHighlight.style.left = e.clientX + 'px';
+                    mouseHighlight.style.top = e.clientY + 'px';
+                }, { passive: true });
+
+                document.addEventListener('mouseleave', () => {
+                    mouseHighlight.style.display = 'none';
+                }, { passive: true });
+
+                document.addEventListener('mouseenter', () => {
+                    mouseHighlight.style.display = 'block';
+                }, { passive: true });
+            }
+
+            window.getClickedElementInfo = (element) => {
+                if (!element) return null;
+
+                const tag = element.tagName || 'unknown';
+                const text = (element.textContent || '').trim().substring(0, 100);
+
+                const elementName =
+                    element.getAttribute('aria-label')?.trim() ||
+                    element.placeholder?.trim() ||
+                    element.value?.trim() ||
+                    element.alt?.trim() ||
+                    text ||
+                    element.id?.trim() ||
+                    tag.toLowerCase();
+
+                return {
+                    tag,
+                    id: element.id || '',
+                    classes: element.className || '',
+                    text: text,
+                    type: element.type || '',
+                    href: element.href || '',
+                    name: element.name || '',
+                    ariaLabel: element.getAttribute('aria-label') || '',
+                    elementName: elementName
+                };
             };
-        };
-        
-        if (!window.showTrackingToast) {
-            window.showTrackingToast = (message) => {
-                const existingToast = document.getElementById('__tracking_toast');
-                if (existingToast) existingToast.remove();
-                
-                const toast = document.createElement('div');
-                toast.id = '__tracking_toast';
-                toast.textContent = message;
-                toast.style.cssText = `
+
+            if (!window.showTrackingToast) {
+                window.showTrackingToast = (message) => {
+                    const existingToast = document.getElementById('__tracking_toast');
+                    if (existingToast) existingToast.remove();
+
+                    const toast = document.createElement('div');
+                    toast.id = '__tracking_toast';
+                    toast.textContent = message;
+                    toast.style.cssText = `
                     position: fixed;
                     top: 20px;
                     right: 20px;
@@ -319,121 +319,121 @@ export async function setupTracking(tracker) {
                     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
                     animation: slideIn 0.3s ease;
                 `;
-                
-                const style = document.createElement('style');
-                style.textContent = `
+
+                    const style = document.createElement('style');
+                    style.textContent = `
                     @keyframes slideIn {
                         from { transform: translateX(100%); opacity: 0; }
                         to { transform: translateX(0); opacity: 1; }
                     }
                 `;
-                if (document.head) {
-                    document.head.appendChild(style);
-                }
-                
-                const parentNode = document.body || document.documentElement;
-                if (parentNode) {
-                    parentNode.appendChild(toast);
-                }
-                
-                setTimeout(() => {
-                    if (toast.parentNode) {
-                        toast.remove();
+                    if (document.head) {
+                        document.head.appendChild(style);
                     }
-                }, 3000);
-            };
-        }
-        
-        if (!window.__keyboardQueue) {
-            window.__keyboardQueue = [];
-        }
 
-        if (typeof window.__detectPagesInProgress === 'undefined') {
-            window.__detectPagesInProgress = false;
-        }
-
-        if (typeof window.__detectPagesPending === 'undefined') {
-            window.__detectPagesPending = false;
-        }
-
-        if (!window.__keydownListenerSetup) {
-            document.addEventListener('keydown', (e) => {
-                if ((e.ctrlKey || e.metaKey) && e.key === '1') {
-                    e.preventDefault();
-                    if (window.__detectPagesInProgress || window.__detectPagesPending) {
-                        if (window.showTrackingToast) window.showTrackingToast('⚠️ Đang xử lý, vui lòng đợi...');
-                        return;
+                    const parentNode = document.body || document.documentElement;
+                    if (parentNode) {
+                        parentNode.appendChild(toast);
                     }
-                    const selId = window.__selectedItemId || null;
-                    const selCat = window.__selectedItemCategory || null;
-                    if (!selId) {
-                        if (window.showTrackingToast) window.showTrackingToast('⚠️ Vui lòng chọn panel trước!');
-                        return;
-                    }
-                    if (selCat !== 'PANEL') {
-                        if (window.showTrackingToast) window.showTrackingToast('⚠️ Chỉ PANEL mới có thể Detect Pages!');
-                        return;
-                    }
-                    window.__detectPagesPending = true;
-                    window.__keyboardQueue.push({ action: 'DETECT_PAGES', timestamp: Date.now() });
-                }
-            }, { capture: true });
 
-            window.__keydownListenerSetup = true;
-        }
-        
-        window.__clickHandler = (e) => {
-            if (!e.isTrusted) {
-                return;
+                    setTimeout(() => {
+                        if (toast.parentNode) {
+                            toast.remove();
+                        }
+                    }, 3000);
+                };
             }
-            
-            const element = e.target;
-            const elementInfo = window.getClickedElementInfo(element);
-            
-            const now = Date.now();
-            const posKey = `${e.clientX}_${e.clientY}`;
-            
-            if (!window.__recentClicks) {
-                window.__recentClicks = new Map();
+
+            if (!window.__keyboardQueue) {
+                window.__keyboardQueue = [];
             }
-            
-            if (window.__recentClicks.has(posKey)) {
-                const lastTime = window.__recentClicks.get(posKey);
-                if (now - lastTime < 1000) {
+
+            if (typeof window.__detectPagesInProgress === 'undefined') {
+                window.__detectPagesInProgress = false;
+            }
+
+            if (typeof window.__detectPagesPending === 'undefined') {
+                window.__detectPagesPending = false;
+            }
+
+            if (!window.__keydownListenerSetup) {
+                document.addEventListener('keydown', (e) => {
+                    if ((e.ctrlKey || e.metaKey) && e.key === '1') {
+                        e.preventDefault();
+                        if (window.__detectPagesInProgress || window.__detectPagesPending) {
+                            if (window.showTrackingToast) window.showTrackingToast('⚠️ Đang xử lý, vui lòng đợi...');
+                            return;
+                        }
+                        const selId = window.__selectedItemId || null;
+                        const selCat = window.__selectedItemCategory || null;
+                        if (!selId) {
+                            if (window.showTrackingToast) window.showTrackingToast('⚠️ Vui lòng chọn panel trước!');
+                            return;
+                        }
+                        if (selCat !== 'PANEL') {
+                            if (window.showTrackingToast) window.showTrackingToast('⚠️ Chỉ PANEL mới có thể Draw Panel & Detect Actions!');
+                            return;
+                        }
+                        window.__detectPagesPending = true;
+                        window.__keyboardQueue.push({ action: 'DRAW_PANEL_AND_DETECT_ACTIONS', timestamp: Date.now() });
+                    }
+                }, { capture: true });
+
+                window.__keydownListenerSetup = true;
+            }
+
+            window.__clickHandler = (e) => {
+                if (!e.isTrusted) {
                     return;
                 }
-            }
-            
-            window.__recentClicks.set(posKey, now);
-            setTimeout(() => window.__recentClicks.delete(posKey), 2000);
-            
-            const clickData = {
-                timestamp: now,
-                click_x: e.clientX,
-                click_y: e.clientY,
-                element_name: elementInfo?.elementName || 'Unknown',
-                element_tag: elementInfo?.tag || '',
-                url: window.location.href
-            };
-            
-            if (!window.__clickQueue) {
-                window.__clickQueue = [];
-            }
-            window.__clickQueue.push(clickData);
-        };
-        
-        document.removeEventListener('click', window.__clickHandler, { capture: true });
-        document.addEventListener('click', window.__clickHandler, { capture: true });
 
-        window.__trackingSetup = true;
-    });
+                const element = e.target;
+                const elementInfo = window.getClickedElementInfo(element);
+
+                const now = Date.now();
+                const posKey = `${e.clientX}_${e.clientY}`;
+
+                if (!window.__recentClicks) {
+                    window.__recentClicks = new Map();
+                }
+
+                if (window.__recentClicks.has(posKey)) {
+                    const lastTime = window.__recentClicks.get(posKey);
+                    if (now - lastTime < 1000) {
+                        return;
+                    }
+                }
+
+                window.__recentClicks.set(posKey, now);
+                setTimeout(() => window.__recentClicks.delete(posKey), 2000);
+
+                const clickData = {
+                    timestamp: now,
+                    click_x: e.clientX,
+                    click_y: e.clientY,
+                    element_name: elementInfo?.elementName || 'Unknown',
+                    element_tag: elementInfo?.tag || '',
+                    url: window.location.href
+                };
+
+                if (!window.__clickQueue) {
+                    window.__clickQueue = [];
+                }
+                window.__clickQueue.push(clickData);
+            };
+
+            document.removeEventListener('click', window.__clickHandler, { capture: true });
+            document.addEventListener('click', window.__clickHandler, { capture: true });
+
+            window.__trackingSetup = true;
+        });
     } catch (err) {
         console.error('Failed to setup tracking injection:', err);
         return;
     }
-    
+
     console.log('✅ Tracking setup completed! Ctrl/Cmd+1: Detect Pages ready.');
-    
+
     if (!tracker._keyboardPoller) {
         tracker._keyboardPoller = setInterval(async () => {
             try {
@@ -449,67 +449,56 @@ export async function setupTracking(tracker) {
                 let inProgress = await tracker.page.evaluate(() => !!window.__detectPagesInProgress);
                 let __detectHandled = false;
                 for (const kb of keyboardActions) {
-                    if (kb.action === 'DETECT_PAGES') {
+                    if (kb.action === 'DRAW_PANEL_AND_DETECT_ACTIONS') {
                         if (inProgress || __detectHandled) {
                             try {
                                 await tracker.page.evaluate(() => { if (window.showTrackingToast) window.showTrackingToast('⚠️ Đang xử lý, vui lòng đợi...'); });
-                            } catch {}
+                            } catch { }
                             continue;
                         }
                         __detectHandled = true;
                         if (!tracker.selectedPanelId) {
                             try {
                                 await tracker.page.evaluate(() => { window.__detectPagesPending = false; if (window.showTrackingToast) window.showTrackingToast('⚠️ Vui lòng chọn panel trước!'); });
-                            } catch {}
+                            } catch { }
                             await tracker._broadcast({ type: 'show_toast', message: '⚠️ Vui lòng chọn panel trước!' });
                             continue;
                         }
                         let selectedItem = null;
                         try {
                             selectedItem = await tracker.dataItemManager?.getItem?.(tracker.selectedPanelId);
-                        } catch {}
+                        } catch { }
                         if (!selectedItem || selectedItem.item_category !== 'PANEL') {
                             try {
-                                await tracker.page.evaluate(() => { window.__detectPagesPending = false; if (window.showTrackingToast) window.showTrackingToast('⚠️ Chỉ PANEL mới có thể Detect Pages!'); });
-                            } catch {}
-                            await tracker._broadcast({ type: 'show_toast', message: '⚠️ Chỉ PANEL mới có thể Detect Pages!' });
+                                await tracker.page.evaluate(() => { window.__detectPagesPending = false; if (window.showTrackingToast) window.showTrackingToast('⚠️ Chỉ PANEL mới có thể Draw Panel & Detect Actions!'); });
+                            } catch { }
+                            await tracker._broadcast({ type: 'show_toast', message: '⚠️ Chỉ PANEL mới có thể Draw Panel & Detect Actions!' });
                             continue;
                         }
-                        let parentEntry = null;
-                        try {
-                            parentEntry = await tracker.parentPanelManager?.getPanelEntry?.(tracker.selectedPanelId);
-                        } catch {}
-                        if (parentEntry && parentEntry.child_pages && parentEntry.child_pages.length > 0) {
-                            try {
-                                await tracker.page.evaluate(() => { window.__detectPagesPending = false; if (window.showTrackingToast) window.showTrackingToast('⚠️ Panel đã có pages! Bấm Reset (↺) nếu muốn detect lại.'); });
-                            } catch {}
-                            await tracker._broadcast({ type: 'show_toast', message: '⚠️ Panel đã có pages! Bấm Reset (↺) nếu muốn detect lại.' });
-                            continue;
-                        }
-                        if (tracker._queueHandlers?.detectPages) {
+                        if (tracker._queueHandlers?.drawPanelAndDetectActions) {
                             try {
                                 await tracker.page.evaluate(() => { window.__detectPagesInProgress = true; window.__detectPagesPending = false; });
                                 inProgress = true;
-                            } catch {}
+                            } catch { }
                             try {
-                                await tracker._queueHandlers.detectPages();
+                                await tracker._queueHandlers.drawPanelAndDetectActions();
                             } finally {
                                 try {
                                     await tracker.page.evaluate(() => { window.__detectPagesInProgress = false; window.__detectPagesPending = false; });
                                     inProgress = false;
-                                } catch {}
+                                } catch { }
                             }
                         } else {
                             try {
                                 await tracker.page.evaluate(() => { window.__detectPagesPending = false; });
-                            } catch {}
+                            } catch { }
                         }
                     }
                 }
-            } catch (err) {}
+            } catch (err) { }
         }, 30);
     }
-    
+
     if (!tracker._clickPoller) {
         tracker._clickPoller = setInterval(async () => {
             try {
@@ -521,14 +510,14 @@ export async function setupTracking(tracker) {
                     window.__clickQueue = [];
                     return clicks;
                 });
-                
+
                 for (const clickData of clicks) {
                     if (tracker.selectedPanelId && tracker.clickManager && tracker.dataItemManager) {
                         const selectedItem = await tracker.dataItemManager.getItem(tracker.selectedPanelId);
-                        
+
                         if (selectedItem && selectedItem.item_category === 'ACTION') {
                             await tracker.clickManager.logClick(tracker.selectedPanelId, clickData);
-                            
+
                             await tracker._broadcast({
                                 type: 'click_event',
                                 action_item_id: tracker.selectedPanelId,
