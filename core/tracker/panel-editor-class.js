@@ -354,7 +354,7 @@ window.PanelEditor = class PanelEditor {
         
         panel.actions.forEach((action, actionIndex) => {
             if (action.action_pos) {
-                const actionPage = action.action_pos.p || 1;
+                const actionPage = action.action_pos.p || Math.floor(action.action_pos.y / 1080) + 1;
                 
                 if (actionPage === currentPage) {
                     this.drawBox(
@@ -367,7 +367,7 @@ window.PanelEditor = class PanelEditor {
             }
         });
         
-        console.log(\`🎨 Drew boxes for \${panel.actions.filter(a => (a.action_pos?.p || 1) === currentPage).length} actions on page \${currentPage}\`);
+        console.log(\`🎨 Drew boxes for \${panel.actions.filter(a => (a.action_pos?.p || Math.floor((a.action_pos?.y || 0) / 1080) + 1) === currentPage).length} actions on page \${currentPage}\`);
     }
 
     drawBox(pos, id, type, title) {
@@ -764,7 +764,8 @@ window.PanelEditor = class PanelEditor {
             x: Math.round(rect.left),
             y: Math.round(rect.top),
             w: Math.round(rect.width * rect.scaleX),
-            h: Math.round(rect.height * rect.scaleY)
+            h: Math.round(rect.height * rect.scaleY),
+            p: this.currentPageIndex + 1
         };
         
         if (typeof id === 'number') {
@@ -1248,7 +1249,8 @@ window.PanelEditor = class PanelEditor {
                 x: Math.round(tempRect.left),
                 y: Math.round(tempRect.top),
                 w: Math.round(tempRect.width),
-                h: Math.round(tempRect.height)
+                h: Math.round(tempRect.height),
+                p: this.currentPageIndex + 1
             }
         };
         

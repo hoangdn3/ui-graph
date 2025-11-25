@@ -1130,8 +1130,30 @@ export const QUEUE_BROWSER_HTML = `
             activeElement.isContentEditable
           );
           if (isEditing) return;
+          
+          const isPanelEditorOpen = document.getElementById('editor-container');
+          if (isPanelEditorOpen) return;
+          
+          const findNodeInTree = (nodes, targetId) => {
+            for (const node of nodes) {
+              if (node.panel_id === targetId) return node;
+              if (node.children) {
+                const found = findNodeInTree(node.children, targetId);
+                if (found) return found;
+              }
+            }
+            return null;
+          };
+          const selectedNode = findNodeInTree(panelTreeData, selectedPanelId);
+          if (!selectedNode) return;
+          
+          const itemCategory = selectedNode.item_category;
+          const confirmMsg = itemCategory === 'PAGE' ? 'Xóa page này? Tất cả actions cũng sẽ bị xóa.' : 
+                            itemCategory === 'ACTION' ? 'Xóa action này?' :
+                            'Xóa panel này khỏi tree? Tất cả panel con cũng sẽ bị xóa.';
+          
           e.preventDefault();
-          if (confirm('Xóa panel này khỏi tree? Tất cả panel con cũng sẽ bị xóa.')) {
+          if (confirm(confirmMsg)) {
             if (window.deleteEvent) {
               window.deleteEvent(selectedPanelId);
             }

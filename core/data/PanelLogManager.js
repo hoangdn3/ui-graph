@@ -42,6 +42,7 @@ export class PanelLogManager {
                     name: item.name,
                     item_category: item.item_category,
                     status: item.status,
+                    action_pos: item.metadata?.global_pos,
                     children: []
                 });
             });
@@ -59,6 +60,13 @@ export class PanelLogManager {
                             parentNode.children.push(actionNode);
                         }
                     }
+                    // Sắp xếp children theo (y, x)
+                    parentNode.children.sort((a, b) => {
+                        if (a.action_pos.y === b.action_pos.y) {
+                            return a.action_pos.x - b.action_pos.x;
+                        }
+                        return a.action_pos.y - b.action_pos.y;
+                    });
                 }
             }
             

@@ -159,27 +159,21 @@ export function createQueuePageHandlers(tracker, width, height, trackingWidth, q
     const resizeQueueBrowserHandler = async (maximize) => {
         try {
             const session = await tracker.queuePage.target().createCDPSession();
+            const { windowId } = await session.send('Browser.getWindowForTarget');
+            
             if (maximize) {
-                const bounds = {
-                    left: 0,
-                    top: 0,
-                    width: width,
-                    height: height
-                };
                 await session.send('Browser.setWindowBounds', {
-                    windowId: (await session.send('Browser.getWindowForTarget')).windowId,
-                    bounds: bounds
+                    windowId,
+                    bounds: { left: 0, top: 0, width: width, height: height }
                 });
             } else {
-                const bounds = {
-                    left: trackingWidth,
-                    top: 0,
-                    width: queueWidth,
-                    height: height
-                };
                 await session.send('Browser.setWindowBounds', {
-                    windowId: (await session.send('Browser.getWindowForTarget')).windowId,
-                    bounds: bounds
+                    windowId,
+                    bounds: { windowState: 'normal' }
+                });
+                await session.send('Browser.setWindowBounds', {
+                    windowId,
+                    bounds: { left: trackingWidth, top: 0, width: queueWidth, height: height }
                 });
             }
             await session.detach();
@@ -213,6 +207,20 @@ export function createQueuePageHandlers(tracker, width, height, trackingWidth, q
             for (const actionId of actionIds) {
                 const actionItem = await tracker.dataItemManager.getItem(actionId);
                 if (actionItem) {
+                    const hasValidP = actionItem.metadata.local_pos.p != null;
+                    const globalY = actionItem.metadata.global_pos.y;
+                    const p = hasValidP ? actionItem.metadata.local_pos.p : Math.floor(globalY / 1080) + 1;
+                    const localY = hasValidP ? actionItem.metadata.local_pos.y : globalY - (p - 1) * 1080;
+                    
+                    if (!hasValidP) {
+                        await tracker.dataItemManager.updateItem(actionItem.item_id, {
+                            metadata: {
+                                local_pos: { p, x: actionItem.metadata.local_pos.x, y: localY, w: actionItem.metadata.local_pos.w, h: actionItem.metadata.local_pos.h },
+                                global_pos: actionItem.metadata.global_pos
+                            }
+                        });
+                    }
+                    
                     actions.push({
                         action_id: actionItem.item_id,
                         action_name: actionItem.name,
@@ -220,9 +228,9 @@ export function createQueuePageHandlers(tracker, width, height, trackingWidth, q
                         action_verb: actionItem.verb,
                         action_content: actionItem.content,
                         action_pos: {
-                            p: actionItem.metadata.local_pos.p,
+                            p: p,
                             x: actionItem.metadata.local_pos.x,
-                            y: actionItem.metadata.local_pos.y,
+                            y: localY,
                             w: actionItem.metadata.local_pos.w,
                             h: actionItem.metadata.local_pos.h
                         }
@@ -347,12 +355,21 @@ export function createQueuePageHandlers(tracker, width, height, trackingWidth, q
                     });
 
                     for (const actionData of toAdd) {
+                        const pageNumber = actionData.action_pos.p || 1;
+                        const globalY = (pageNumber - 1) * 1080 + actionData.action_pos.y;
+                        const globalPos = {
+                            x: actionData.action_pos.x,
+                            y: globalY,
+                            w: actionData.action_pos.w,
+                            h: actionData.action_pos.h
+                        };
+                        
                         const actionItemId = await tracker.dataItemManager.createAction(
                             actionData.action_name,
                             actionData.action_type || 'button',
                             actionData.action_verb || 'click',
-                            actionData.action_pos,
-                            null
+                            globalPos,
+                            pageNumber
                         );
 
                         await addActionToItem(tracker.selectedPanelId, panelItem.item_category, actionItemId);
@@ -388,19 +405,18 @@ export function createQueuePageHandlers(tracker, width, height, trackingWidth, q
                     validActions.sort((a, b) => {
                         const posA = a.metadata?.local_pos || { x: 0, y: 0 };
                         const posB = b.metadata?.local_pos || { x: 0, y: 0 };
-
-                        const yDiff = posA.y - posB.y;
-                        if (Math.abs(yDiff) > 5) {
-                            return yDiff;
+                        if (posA.y === posB.y) {
+                            return posA.x - posB.x;
                         }
-                        return posA.x - posB.x;
+                        return posA.y - posB.y;
                     });
 
                     const sortedActionIds = validActions.map(a => a.item_id);
-
-                    await tracker.dataItemManager.updateItem(tracker.selectedPanelId, {
-                        child_actions: sortedActionIds
-                    });
+                    const panelEntry = await tracker.parentPanelManager.getPanelEntry(tracker.selectedPanelId);
+                    if (panelEntry) {
+                        panelEntry.child_actions = sortedActionIds;
+                        await tracker.parentPanelManager.updatePanelEntry(tracker.selectedPanelId, panelEntry);
+                    }
 
                     const stepContent = await tracker.stepManager.getAllSteps();
                     const relatedStep = stepContent.find(step => step.panel_after.item_id === tracker.selectedPanelId);
@@ -1426,20 +1442,6 @@ export function createQueuePageHandlers(tracker, width, height, trackingWidth, q
             if (restoreViewport) {
                 await restoreViewport();
             }
-
-            const session = await tracker.queuePage.target().createCDPSession();
-            const bounds = {
-                left: trackingWidth,
-                top: 0,
-                width: queueWidth,
-                height: height
-            };
-            await session.send('Browser.setWindowBounds', {
-                windowId: (await session.send('Browser.getWindowForTarget')).windowId,
-                bounds: bounds
-            });
-            await session.detach();
-            console.log('✅ Queue browser resized back to normal');
 
             try {
                 await tracker.page.reload({ waitUntil: 'domcontentloaded', timeout: 10000 });
@@ -2886,11 +2888,11 @@ export function createQueuePageHandlers(tracker, width, height, trackingWidth, q
     };
 
     const resetDrawingFlagHandler = async () => {
-        await tracker.queuePage.evaluate(() => {
+        /*await tracker.queuePage.evaluate(() => {
             if (typeof isDrawingPanel !== 'undefined') {
                 isDrawingPanel = false;
             }
-        });
+        });*/
     };
 
     const checkActionHasStepHandler = async (actionItemId) => {
