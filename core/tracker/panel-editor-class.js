@@ -1292,7 +1292,7 @@ window.PanelEditor = class PanelEditor {
         const finishEditing = () => {
             this.isEditingLabel = false;
             
-            const normalizedText = itext.text.trim().replace(/\s+/g, ' ');
+            const normalizedText = itext.text.trim().replace(/\\s+/g, ' ');
             const newText = normalizedText || 'Unnamed';
             const oldText = label.text;
             
