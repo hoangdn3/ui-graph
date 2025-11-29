@@ -1023,7 +1023,7 @@ window.PanelEditor = class PanelEditor {
             
             const actionContent = prompt('Action Content (optional):');
             
-            const normalizeWhitespace = (text) => text ? text.trim().replace(/\s+/g, ' ') : '';
+            const normalizeWhitespace = (text) => text ? text.trim().replace(/\\s+/g, ' ') : '';
             
             const actionData = {
                 name: normalizeWhitespace(actionName) || 'Unnamed',
