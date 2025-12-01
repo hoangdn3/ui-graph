@@ -356,7 +356,7 @@ export class MySQLExporter {
                     
                     const clicks = allClicks.filter(c => c.action_item_id === actionItemId)
                         .sort((a, b) => a.timestamp - b.timestamp);
-                    const stepTimestamp = clicks.length > 0 ? clicks[0].timestamp : null;
+                    const stepTimestamp = clicks.length > 0 ? clicks[0].timestamp : 0;
                     
                     const myStep = `DOS-${recordId}-${stepId}-${stepType}`;
                     const code = `${this.myAiTool}_${myStep}`;
@@ -399,7 +399,7 @@ export class MySQLExporter {
                 
                 console.log(`✅ Exported ${stepCount} steps to doing_step`);
             } catch (err) {
-                console.log('⚠️ No doing_step.jsonl found or empty');
+                console.log('⚠️ No doing_step.jsonl found or empty:', err.message);
             }
             
             await this.generatePagesFromPanels(items, itemIdToMyItemMap);
